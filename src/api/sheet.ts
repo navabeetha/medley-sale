@@ -8,7 +8,12 @@ export interface Tab {
   readonly name: string;
   /** Every row, header row first. Rows may be shorter than the widest row. */
   getGrid(): CellValue[][];
-  /** Write one cell as a plain value. Strings are stored exactly as given. */
+  /**
+   * Write one cell as a plain value. The fake stores it as given; real Sheets
+   * parses it (a leading apostrophe is not read back, "1/2" may become a date,
+   * "00123" a number). Blank cells read back as null in the fake, "" in Sheets:
+   * treat both as blank.
+   */
   setCell(row: number, col: number, value: CellValue): void;
   /** Append a row after the last used row. */
   appendRow(values: CellValue[]): void;

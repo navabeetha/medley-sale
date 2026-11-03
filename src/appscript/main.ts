@@ -2,6 +2,7 @@
 // in src/api/migrate.ts. Logs counts only, never names, numbers or tokens.
 
 import { migrate, scrubStaging } from "../api/migrate";
+import { uuidsToBytes } from "../api/random";
 import { activeSpreadsheet } from "./adapter";
 
 /**
@@ -13,23 +14,22 @@ import { activeSpreadsheet } from "./adapter";
  * so 16 bytes (128 bits) come from at least two UUIDs (240 bits available).
  */
 function randomBytes(n: number): Uint8Array {
-  const nibbles: string[] = [];
-  while (nibbles.length < n * 2) {
-    const hex = Utilities.getUuid().replace(/-/g, "");
-    nibbles.push(...[...hex].filter((_, i) => i !== 12 && i !== 16));
-  }
-  return Uint8Array.from({ length: n }, (_, i) => parseInt(nibbles[2 * i]! + nibbles[2 * i + 1]!, 16));
+  const uuids: string[] = [];
+  for (let have = 0; have < n * 2; have += 30) uuids.push(Utilities.getUuid());
+  return uuidsToBytes(uuids, n);
 }
 
 export function scrubStagingRun(): void {
   const r = scrubStaging(activeSpreadsheet(), { log: (l) => console.log(l) });
   console.log(
     `scrubStaging done: ${r.peopleReplaced} people, ${r.numbersRemoved} numbers, ${r.commentsRemoved} notes. ` +
-      "Threaded comments cannot be removed by script: delete them by hand (Comments panel, Delete all).",
+      "Threaded comments can't be removed by script: open each comment (and resolved comments via the comment history) and delete it.",
   );
 }
 
 export function migrateSheetRun(): void {
+  // Never pass allowUnscrubbed here: it exists for unit tests only. From the
+  // editor, migrate must always refuse a sheet the scrub has not cleaned.
   migrate(activeSpreadsheet(), {
     randomBytes,
     now: () => new Date().toISOString(),
