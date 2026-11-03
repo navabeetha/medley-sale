@@ -9,7 +9,7 @@ const mixed = (n: number) => ("Ab1_" + "xY9-".repeat(20)).slice(0, n);
 
 describe("Apps Script, Drive and Docs links", () => {
   it("flags openById calls", () => {
-    expect(rules("SpreadsheetApp." + "open" + "ById(id)")).toContain("sheet");
+    expect(rules("SpreadsheetApp." + "open" + "ById('id')")).toContain("sheet");
   });
   it("flags drive links", () => {
     expect(rules("https://drive.google" + ".com/file/d/abc/view")).toContain("sheet");

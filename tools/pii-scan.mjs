@@ -19,13 +19,18 @@ const PHONE = /(?<![\w.+/-])(\+?)(\(?\d[\d\s\-()./]{7,18}\d)(?![\w-])/g;
 const ENCODED_EMAIL = /[A-Za-z0-9._+-]+%40[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+/gi;
 const SHEET_URL = /docs\.google\.com\/spreadsheets/i;
 const SHEET_ID_NEAR = /spreadsheets[^\n]{0,80}?(?<![A-Za-z0-9_-])[A-Za-z0-9_-]{44}(?![A-Za-z0-9_-])/i;
-const SHEET_OTHER = /openById\(|drive\.google\.com|docs\.google\.com\/(?:document|forms|presentation|file)/i;
+// openById is flagged only for a string-literal id; one read from script properties is fine.
+const SHEET_OTHER = /openById\(\s*["'`]|drive\.google\.com|docs\.google\.com\/(?:document|forms|presentation|file)/i;
 // Bare 40-50 char id-like run (url-safe base64 alphabet). Checked for upper, lower and a
 // digit in code so hex digests, git SHAs and lowercase words never match; runs longer than
 // 50 (script deployment ids, integrity hashes) fail the length bounds.
 const BARE_ID = /(?<![A-Za-z0-9_-])[A-Za-z0-9_-]{40,50}(?![A-Za-z0-9_-])/g;
+// camelCase/PascalCase code words (handleReserveItemForUnit2): no "_" or "-", every capital
+// starts a lowercase word, digits only trail a word (max 3). Random ids break this almost
+// always: a capital next to a capital, a digit or a separator is common in base64url.
+const CODE_WORD = /^[A-Za-z][a-z]*\d{0,3}(?:[A-Z][a-z]+\d{0,3})+$/;
 const hasBareId = (content) =>
-  [...content.matchAll(BARE_ID)].some((m) => /[A-Z]/.test(m[0]) && /[a-z]/.test(m[0]) && /\d/.test(m[0]));
+  [...content.matchAll(BARE_ID)].some((m) => /[A-Z]/.test(m[0]) && /[a-z]/.test(m[0]) && /\d/.test(m[0]) && !CODE_WORD.test(m[0]));
 // Personal words that must never be committed (e.g. the owner's first name). They are
 // never stored in this public repo: locally they come from private/blocked-words.txt
 // (gitignored, one per line, # comments), in CI from the PII_BLOCKED_WORDS secret.

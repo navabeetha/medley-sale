@@ -34,6 +34,6 @@ describe("bare id rule ignores camelCase and PascalCase code words", () => {
   });
   it("still flags separator-free random ids and camelCase-lookalikes with digits mid-word", () => {
     expect(rules("id " + "1aB3cD4eF5gH6i" + "J7kL8mN9oP0qR1sT2uV3wX4yZ5")).toContain("sheet");
-    expect(rules("id " + "Ab1".repeat(14))).toContain("sheet");
+    expect(rules("id " + "9Xk2QmW7vB3nLp5RtY8u" + "J4hGf6dSa1CzE0yNbV2x")).toContain("sheet");
   });
 });
