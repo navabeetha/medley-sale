@@ -7,6 +7,11 @@ One dated entry per story verified (see `docs/qa/README.md`). No real names, num
 | ID | Story | Automated or live | Last run | Result |
 |---|---|---|---|---|
 | T-12 (CI half: tracked-file scan) | S-01 | Automated (`npm run pii`) | 2026-11-03 | Pass, with rule gaps listed under S-01 below |
+| T-02 (domain half) | S-02 | Automated (`test/unit/queue.test.ts`) | 2026-11-03 | Pass |
+| T-03 (domain half: partial hold) | S-02 | Automated | 2026-11-03 | Pass. Booking grouping is S-11 |
+| T-04 (domain half) | S-02 | Automated | 2026-11-03 | Pass. New higher ID is S-11's job |
+| T-06 (domain half) | S-02 | Automated | 2026-11-03 | Pass for the cases tested. See S-02 F1 (a restored claim is never stamped) |
+| T-07 (domain half: overflow detection) | S-02 | Automated (`canMarkSold`) | 2026-11-03 | Pass. Revert and cell note are S-15. See S-02 F2 (NaN quantity) |
 
 ---
 
@@ -174,3 +179,72 @@ A real push to GitHub and Actions runs (the deploy criterion, manual after G0.1,
 ### Not verified
 
 A real GitHub push and Actions runs (the deploy criterion is still manual after G0.1, with the steps in the first entry). Anything outside the F1 to F3 fix: per the owner's scope, I did not re-review the rest of the diff, lint or tsconfig, or the other scan rules.
+
+---
+
+## 2026-11-03: S-02 Queue engine with quantity
+
+**Branch:** `S-02-queue-engine` compared with `main`. Red commit `b95811d` adds `test/unit/queue.test.ts` (53 tests). Green commit `43ee0fd` adds `src/domain/queue.ts`, about 100 lines. No test changed between red and green.
+**Result:** Not signed off yet. The engine itself is correct for the rules as the proposal states them. What's missing: the proposed decisions aren't recorded (DoD), the F1 rule needs a decision, and two small test gaps remain. Details below.
+
+### Verified
+
+- **Gate:** `npm run check`, exit 0 on the first run (no WebKit teardown flake). Vitest 184/184 (12 files), Playwright 16/16, size 0.7 KB of 50 KB, `pii-scan: 77 files, 0 finding(s)`.
+- **Red, then green:** I ran `b95811d` from a `git archive` copy. It fails with "Cannot find module ../../src/domain/queue", so every test is red only because the module is new. At `43ee0fd`, 53/53 pass.
+- **Diff hygiene:** only the two files changed. No console or debugger statements, no `.only` or `.skip`, no new dependencies. All test data is synthetic (numeric IDs and ISO timestamps, no people).
+- **Purity:** no clock, no platform imports. `now` is passed in. Tests check that inputs are not mutated and that input order doesn't change roles.
+- **Signature:** `recalculate(item, claims, now)`. This is the story's single `recalculate(item, claims)` with `now` passed in, which the brief allows. `canMarkSold(item, claims, claimId)` is a separate validator for rule 7. It doesn't produce holder or promotion results, so it doesn't break the "single function" criterion.
+- **Mutation run** on a scratch copy of the branch (`git archive`), with `queue.test.ts` run after each mutant:
+
+| Mutant | Result |
+|---|---|
+| M1: sort by string ID | Red, 2 tests |
+| M2: `active < unitsLeft` (off by one) | Red, 26 tests |
+| M3: `unitsLeft + 1` | Red, 28 tests |
+| M4: keep `promotedAt` on demotion | Red, 3 tests (including both T-06 tests) |
+| M5: stamp holders who were never waiting (creation holders) | Red, 5 tests |
+| M6: drop the `max(0, …)` clamp | Red, 1 test |
+| M7: `soldOut = unitsLeft === 0` (ignores whether anything was sold) | **Survives**, 53/53 |
+| M8: `canMarkSold` uses `>` instead of `>=` | Red, 2 tests (T-07) |
+| M9: no sort at all | Red, 2 tests |
+| M10: keep `promotedAt` on a released claim | Red, 1 test |
+| M11: a holder keeps the `promotedAt` it came in with, whatever its `previousRole` | **Survives**, 53/53 |
+| M12: never report demotions | Red, 4 tests |
+| M13: refuse to sell a waiting claim | Red, 1 test |
+
+- **Rule coverage, 6.1.1 to 6.1.8:**
+  - **Rule 1:** tested (M1, M9).
+  - **Rule 2:** tested (M2, M3).
+  - **Rule 3:** tested (M4, M5, M10, M12), apart from M11.
+  - **Rules 4 and 5:** tested. Both follow from ordering by ID, so the M1 and M9 tests cover them too.
+  - **Rule 6:** the lock belongs to the caller. Here it's covered by the purity and idempotence tests, as the story says.
+  - **Rule 7:** tested (M8, M13).
+  - **Rule 8:** tested, apart from M7.
+
+### Findings (worst first)
+
+- **F1 (S3, design): a restored claim is never stamped, even when it is newly holding.** Rule 4 covers undoing a sale or a release. The caller passes `previousRole: null` for the restored claim, so the engine can't tell it from a brand-new claim, and it never gets `Promoted at`. Reproduced: quantity 2, claims 1 and 2 released, claim 3 restored (was waiting, then sold by mistake, then undone), claim 4 waiting. Result: 3 and 4 are both holders, but only 4 is stamped, and `promoted` is `[4]`. Claim 3 never held a unit before, yet it gets no `To do` row, so the seller has no prompt to message that person. Workaround: the buyer's booking page shows the hold, and the seller can see it in `Claims`. Because of D-010 (no expiry), a hold nobody knows about can sit unclaimed indefinitely. **Recommended smaller rule:** widen `previousRole` to `"holder" | "waiting" | "sold" | "ended" | null` and stamp on any change into holder from anything except `"holder"` or `null`, where `null` means only "created in this write". A restored claim then comes in as `"sold"` or `"ended"` and is stamped if it lands as a holder. A T-06 original holder that regains its place is also stamped. The brief doesn't forbid that: T-06 only asks that the *other* claim be cleared. One extra message after a seller's own mistake costs less than a hold nobody acts on. If the PM wants original holders left unstamped, the engine needs the claim's role from before it left the line, which means storing more data. That's the larger option.
+- **F2 (S3): a NaN quantity turns off the overflow check.** I confirmed `canMarkSold({quantity: NaN}, …)` returns `{ok: true}`, because `NaN <= 0` and `sold >= NaN` are both false. `recalculate` then returns `unitsLeft: NaN`, makes every claim waiting, and sets `soldOut` to false. A blank or text `Quantity` cell parsed with `Number()` could slip past rule 7. A quantity of 2.5 produces 2 holders and "2.5 left". Fix: treat a quantity that isn't a non-negative whole number as invalid in both functions, starting with a failing test. This is cheap now and could also be guarded in S-15.
+- **F3 (S3, contract risk for S-11 and S-15): `previousRole` has nowhere to live.** The `Claims` columns in brief 4.1 don't include a role. If a caller passes `null` for everyone, nobody is ever stamped: the `To do` tab stays empty and T-02's notification fails silently. Callers should work out `previousRole` by running `recalculate` on the claims as they were before the change, under the lock. That approach also produces `"sold"` and `"ended"`, which fits the F1 rule. Alternatively, add a script-written role column, which is an S-03 schema change. The PM should record which approach is chosen.
+- **F4 (S3, contract risk for S-15): `canMarkSold` assumes the claim isn't sold yet.** It rejects a target that isn't `active`. When the seller edits the sheet, the on-edit trigger sees `State` already set to `sold`. If S-15 passes the claims as they are after the edit, every sale is reverted with "Only an active reservation…". This is unconfirmed because S-15 doesn't exist yet. Document the expected input (the claims before the edit), or add an after-edit check (`sold > quantity`).
+- **F5 (S4, coverage): M7 survives.** No test checks `soldOut` for quantity 0 with nothing sold, so proposed decision 3 isn't locked in. Add `expect(r.soldOut).toBe(false)` (and `itemSold` false) to the quantity-0 test.
+- **F6 (S4, coverage): M11 survives.** No test feeds a holder with `previousRole` `null` or `"waiting"` together with an existing, stale `promotedAt`.
+- **F7 (S4, docs):** `docs/decisions/README.md` says "Next free ID: D-024", but D-024 and D-025 already exist. The next free ID is D-026.
+
+### Proposed design decisions
+
+1. **Stamp only on a waiting-to-holder change; creation holders are not stamped.** Agreed. It matches rule 3 ("newly promoted") and the meaning of `To do`: a buyer who holds from the start already saw "held" on the confirmation screen. M5 confirms it's tested. The cost is F3: the caller must supply `previousRole`.
+2. **Restored claims come in as `null` and are never stamped.** Not agreed. See F1 and its recommended rule.
+3. **`soldOut` only when at least one unit is sold and `unitsLeft` is 0.** This fits 6.2 for the "Sold" label: an item that sold nothing shouldn't say "Sold". But with quantity 0 and nothing sold, 6.2 then shows "Reserved, N waiting, Join waiting list", even with 0 claims. That's misleading, and joining that list goes nowhere. Recommendation: quantity 0 means "not for sale". Hide it from the list like a sold-out item, and have the direct link say it isn't available. The engine should flag this explicitly (for example `unavailable: true`) rather than display code reading it from `freeUnits`. This needs a PM decision before S-06. It's untested now (F5).
+4. **`unitsLeft = max(0, quantity − sold)` on bad data.** Agreed and tested (M6). `freeUnits` is clamped too. Bad data shows "sold out" rather than a negative count. It doesn't cover NaN (F2).
+
+### Sign-off
+
+- Merge S-02: **not yet.** I'll re-review when (a) the PM has recorded the S-02 decisions (D-026 or later) for points 1 to 3 and the F3 `previousRole` source, (b) F1 is either fixed with the recommended rule plus a failing-first test, or explicitly accepted in that decision, and (c) the F5 test is added. F2 should be fixed in this story. F6 is optional.
+
+### Not verified
+
+- Anything to do with sheets, triggers, the lock, or the API (S-11, S-15).
+- Duplicate claim IDs: the engine returns the same ID twice, as both holder and waiting. Rule 1 makes unique IDs the caller's guarantee, so I tested this but didn't raise it as a finding.
+- I didn't run the mutants against the whole suite, only `queue.test.ts`.
+- There's no UI, so no viewport or screenshot checks.
