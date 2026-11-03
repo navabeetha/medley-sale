@@ -3,13 +3,13 @@
 *Maintained by the PM and updated after every story. Last updated: 2026-11-03 (S-02 done).*
 
 **Scope:** MVP only (brief Section 8), 43 points in 4 slices, worked in order.
-**Now:** S-01 and S-02 merged locally, QA signed off. Nothing pushed yet. **Next:** first push and deploy check (G0.1), then G0.2 so S-03 can start. Every remaining Slice 1 story depends on S-03.
+**Now:** S-01 and S-02 Done. First push made 2026-11-03; CI and Pages deploy green, site live with placeholder page. **Next:** G0.2 (build copy, attached script, `clasp login`) so S-03 can start. Every remaining Slice 1 story depends on S-03.
 
 ## Gates
 
 | Gate | Stage | What | Status |
 |---|---|---|---|
-| G0 | G0.1 | Public GitHub repo, Pages from Actions, commit identity | Repo and Pages done; secret and backup clean-up pending |
+| G0 | G0.1 | Public GitHub repo, Pages from Actions, commit identity | Done 2026-11-03: secret added, backup cleaned (0 blocked-word hits), first deploy green |
 | G0 | G0.2 | Build copy, attached script, `clasp login` | Not started |
 | G0 | G0.3 | Scrub run and checked by eye | Not started |
 | G1 | | Staging review on phone, end of Slice 3 | Not started |
@@ -19,31 +19,30 @@ G0 is staged per [D-018](../decisions/D-018-g0-in-stages.md). Steps: [docs/runbo
 
 ## Waiting on the seller
 
-1. **G0.1:** add the `PII_BLOCKED_WORDS` repo secret on GitHub.
-2. **G0.1:** run the one-line clean-up that deletes the local pre-rewrite backup (R2 in the QA log).
-3. Review the proposed decisions D-016 to D-023 when convenient. They stand as proposed meanwhile.
+1. **G0.2:** build copy, attached script, `clasp login` (walkthrough next).
+2. Review the proposed decisions D-016 to D-023 when convenient. They stand as proposed meanwhile.
 
 ## Board
 
 | Backlog | Ready | In progress | In QA | Done |
 |---|---|---|---|---|
-| S-04 to S-18 | S-03 (blocked by G0.2) | none | S-01 (deploy check pending first push) | S-02 |
+| S-04 to S-18 | S-03 (blocked by G0.2) | none | none | S-01, S-02 |
 
 ## Slices
 
 | Slice | Stories | Pts | Done pts | Exit | Status |
 |---|---|---|---|---|---|
-| 1. See the sale | S-01 to S-08 | 20 | 5 | Catalogue live, and D-001 proven | Not started |
+| 1. See the sale | S-01 to S-08 | 20 | 7 | Catalogue live, and D-001 proven | In progress |
 | 2. Reserve | S-09 to S-13 | 11 | 0 | Reserve through to the WhatsApp URL | Not started |
 | 3. Back out and sell | S-14 to S-16 | 8 | 0 | Full loop on staging, then G1 | Not started |
 | 4. Release | S-17, S-18 | 4 | 0 | Link ready for the group (G2) | Not started |
-| **Total** | | **43** | **5** | | |
+| **Total** | | **43** | **7** | | |
 
 ## Stories
 
 | ID | Title | Pts | Slice | Depends on | Status | Gate |
 |---|---|---|---|---|---|---|
-| [S-01](stories/S-01-scaffold-ci-pages.md) | Scaffold, CI and Pages deploy | 2 | 1 | none | In QA: signed off, deploy check pending | G0.1 for deploy |
+| [S-01](stories/S-01-scaffold-ci-pages.md) | Scaffold, CI and Pages deploy | 2 | 1 | none | Done (QA signed off; deploy verified 2026-11-03) | G0.1 done |
 | [S-02](stories/S-02-queue-engine.md) | Queue engine with quantity | 5 | 1 | S-01 | Done (QA signed off) | |
 | [S-03](stories/S-03-sheet-schema-migration.md) | Sheet schema and migration | 3 | 1 | S-01 | Ready, blocked by G0.2 | G0.2, G0.3 |
 | [S-04](stories/S-04-catalogue-api.md) | Catalogue API | 2 | 1 | S-02, S-03 | Backlog | D-001 go or no-go |

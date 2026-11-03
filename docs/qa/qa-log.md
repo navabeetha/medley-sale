@@ -329,3 +329,11 @@ None at S1 to S3.
 - The caller side of D-026 §2 (rerunning `recalculate` on the claims from before the change under the lock, and S-15 rebuilding those claims from the edit event's old value). This can't be tested until S-11, S-14 and S-15 exist. It is the main integration risk: if callers pass `null` for everyone, nobody is ever stamped. S-11 and S-15 need an API-level test that a waiter promoted by a back-out or sale gets `Promoted at` and a `To do` row.
 - Mutants were run against `queue.test.ts` only, not the whole suite.
 - No UI, so no viewport or screenshot checks. Sheets, triggers and the lock were not examined.
+
+## 2026-11-03: S-01 deploy check after first push (PM, live check)
+
+- R2 closed: `refs/original` removed, reflog expired, gc run by the seller; blocked-word count over all refs, reflog and messages is 0.
+- First push of `main` (pre-push hook: 40 commits, 0 findings). CI and Deploy to GitHub Pages both green; deploy ran fail-closed, so the blocked-words secret is present and non-empty.
+- Live site returns 200 with title, viewport, referrer, robots and CSP meta tags. `/private/`, `/.git/`, `/.git/config`, `/BUILD_BRIEF.md` return 404.
+- `playwright install --with-deps` works on the runner.
+- Phone-viewport rendering covered by the CI e2e profiles; an on-device look is left to G1.
