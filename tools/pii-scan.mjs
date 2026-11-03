@@ -1,12 +1,14 @@
 // Personal-data and secrets scan (brief 11.6, T-12). Usage: node tools/pii-scan.mjs
 // Scans git-tracked files (plus untracked, non-ignored ones so a local run sees new
 // work before commit). Reports file:line and rule only, never the matched value.
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 // Files whose content is machine-generated and full of hashes.
 const SKIP_CONTENT = new Set(["package-lock.json"]);
+// History patches: matched per file by exact basename, so "package-a.txt" next to it is still scanned.
+const isLockfile = (path) => path === "package-lock.json" || path.endsWith("/package-lock.json");
 
 const SYNTHETIC_PHONE = /^(?:91|0091)?90000000\d{2}$/;
 const ALLOWED_EMAIL = [/@users\.noreply\.github\.com$/i, /^noreply@anthropic\.com$/i, /^noreply@github\.com$/i];
@@ -148,13 +150,14 @@ export function scanPatchLog(text, blocked = []) {
     let inHunk = false;
     let added = [];
     const flush = () => {
-      if (file && !SKIP_CONTENT.has(file) && added.length) {
+      if (file && !isLockfile(file) && added.length) {
         findings.push(...scanText(`commit ${sha.slice(0, 7)} ${file}`, added.join("\n"), blocked).map((f) => ({ ...f, line: 0 })));
       }
       added = [];
     };
     for (const l of lines) {
-      if (!inHunk && l.startsWith("diff --git ")) { flush(); file = null; continue; }
+      // Never starts with + - space or backslash, so it is a real header even inside a hunk.
+      if (l.startsWith("diff --git ")) { flush(); file = null; inHunk = false; continue; }
       if (inHunk && (l.startsWith("+") || l.startsWith("-") || l.startsWith(" ") || l.startsWith("\\"))) {
         if (l.startsWith("+")) added.push(l.slice(1));
         continue;
@@ -186,8 +189,12 @@ export function scanRevisions(revArgs, blocked = [], cwd = process.cwd()) {
   const run = (extra, tail = []) =>
     execFileSync("git", ["-c", "core.quotepath=false", "log", "--no-color", "--no-ext-diff", "--no-textconv", ...extra, ...revArgs, ...tail],
       { cwd, encoding: "utf8", maxBuffer: 256 * 1024 * 1024, stdio: ["ignore", "pipe", "ignore"] });
-  const patches = run(["-p", "-U0", "--format=%x1e%H"], ["--", ".", ":(exclude,glob)**/package-lock.json"]);
-  const names = run(["--name-only", "--diff-filter=AR", "--format=%x1e%H"]);
+  // No pathspec (it triggers history simplification that drops side-branch commits), and
+  // merges show their diff against the first parent so content introduced by the merge
+  // itself is seen. Lockfiles are skipped per file in the parser.
+  const mode = ["--full-history", "--diff-merges=first-parent"];
+  const patches = run([...mode, "-p", "-U0", "--format=%x1e%H"]);
+  const names = run([...mode, "--name-only", "--diff-filter=AR", "--format=%x1e%H"]);
   const findings = scanPatchLog(patches, blocked);
   for (const rec of names.split("\x1e")) {
     const [sha, ...paths] = rec.split("\n").map((x) => x.trim()).filter(Boolean);
@@ -218,12 +225,14 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     if (buf.subarray(0, 8000).includes(0)) continue; // binary
     findings.push(...scanText(file, buf.toString("utf8"), blocked));
   }
-  // Everything reachable from HEAD (CI checks out full history). No commits yet is fine.
-  try {
-    const log = execFileSync("git", ["log", `--format=${GIT_LOG_FORMAT}`, "HEAD"], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024, stdio: ["ignore", "pipe", "ignore"] });
+  // Everything reachable from HEAD (CI checks out full history). Only a repository with no
+  // commits is skipped, detected explicitly; any git error fails the scan.
+  const hasCommits = spawnSync("git", ["rev-parse", "--verify", "--quiet", "HEAD^{commit}"], { stdio: "ignore" }).status === 0;
+  if (hasCommits) {
+    const log = execFileSync("git", ["log", `--format=${GIT_LOG_FORMAT}`, "HEAD"], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024, stdio: ["ignore", "pipe", "inherit"] });
     findings.push(...scanCommits(parseLog(log), blocked));
     findings.push(...scanRevisions(["HEAD"], blocked));
-  } catch { /* no commits */ }
+  }
   for (const f of findings) console.error(`FAIL ${f.file}${f.line ? `:${f.line}` : ""}  ${f.rule}`);
   console.log(`pii-scan: ${tracked.length + untracked.length} files, ${findings.length} finding(s)`);
   process.exit(findings.length || problem?.fail ? 1 : 0);
