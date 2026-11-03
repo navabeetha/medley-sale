@@ -38,3 +38,7 @@ At G1, change a `State` dropdown in the Sheets phone app and confirm the site an
 ## Out of scope
 
 A seller phone screen (N-02), manual waitlist reordering (N-08), and flagging slow responders (N-03).
+
+## Note from S-02 (D-026)
+
+The on-edit trigger must call `canMarkSold` and derive `previousRole` from the claims **as they were before the edit** (use the edit event's old value). Passing the after-edit state would revert every sale.

@@ -33,4 +33,4 @@ New decisions are recorded here, one file each: `D-016-<slug>.md`, `D-017-<slug>
 | [D-022](D-022-size-budget-gzip.md) | The 50 KB budget is measured with gzip | Proposed |
 | [D-023](D-023-commit-email-privacy.md) | Commits use a GitHub no-reply email | Proposed, **needs the seller at G0** |
 
-**Next free ID: D-024.** Update this line and the index whenever you add a decision.
+**Next free ID: D-027.** Update this line and the index whenever you add a decision.
