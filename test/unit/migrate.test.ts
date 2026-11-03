@@ -263,7 +263,7 @@ describe("migrate tokens (D-005)", () => {
   it("draws at least 128 bits (16 bytes) from the injected random source per token", () => {
     const ss = buildStaging();
     const rnd = counterRandom();
-    migrate(ss, { randomBytes: rnd.fn, now: () => NOW });
+    migrate(ss, { randomBytes: rnd.fn, now: () => NOW, allowUnscrubbed: true });
     const total = rnd.requested.reduce((a, b) => a + b, 0);
     expect(bookingsOf(ss).length).toBeGreaterThan(0);
     expect(total).toBeGreaterThanOrEqual(16 * bookingsOf(ss).length);

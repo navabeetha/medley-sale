@@ -201,17 +201,22 @@ describe("scrub: Claims and Bookings tabs (B1)", () => {
   it("finds Name and Number by header, not position", () => {
     const ss = postMigrate();
     const claims = ss.getTab("Claims") as FakeTab;
-    // Swap the Name and Number header cells and their data.
+    // Seed a synthetic number, then swap whole columns (headers included) so
+    // Name and Number change position.
     const n = col(ss, "Claims", "Name"), m = col(ss, "Claims", "Number");
+    for (let r = 2; r <= claims.grid.length; r++) claims.setCell(r, m + 1, "+91 90000 00002");
     claims.grid.forEach((r) => {
       const tmp = r[n] ?? null;
       r[n] = r[m] ?? null;
       r[m] = tmp;
     });
+    expect(col(ss, "Claims", "Name")).toBe(m); // fixture guard: positions really swapped
     scrubStaging(ss);
-    for (const v of column(ss, "Claims", "Name")) expect(v === null || v === "").toBe(true); // Name is now where Number was
-    for (const v of column(ss, "Claims", "Number")) expect(String(v ?? "")).not.toContain("Testperson");
-    expect(ss.snapshot()).not.toContain("Testperson");
+    const names = column(ss, "Claims", "Name").filter((v) => v !== null && v !== "");
+    expect(names.length).toBeGreaterThan(0);
+    for (const v of names) expect(String(v)).toMatch(/^Test Person \d+$/);
+    for (const v of column(ss, "Claims", "Number")) expect(v === null || v === "").toBe(true);
+    for (const o of [...BUYER_NAMES, FORMULA_NAME, "90000 00002"]) expect(ss.snapshot()).not.toContain(o);
   });
 });
 
