@@ -248,3 +248,84 @@ A real GitHub push and Actions runs (the deploy criterion is still manual after 
 - Duplicate claim IDs: the engine returns the same ID twice, as both holder and waiting. Rule 1 makes unique IDs the caller's guarantee, so I tested this but didn't raise it as a finding.
 - I didn't run the mutants against the whole suite, only `queue.test.ts`.
 - There's no UI, so no viewport or screenshot checks.
+
+---
+
+## 2026-11-03 (re-review): S-02 after D-026
+
+**Branch:** `S-02-queue-engine`, the three commits after the first S-02 entry (`cf9a241`): `8dcea2e` (PM records D-026), `c12f2b8` (red tests), `adefd76` (implementation).
+**Result:** **Signed off for merge to `main`.** No S1 to S3 findings. Everything the first review asked for is done. Four S4 notes below can be picked up later.
+
+### What changed
+
+D-026 sets these rules. **Promotion:** any change into holder from a `previousRole` other than `"holder"` or `null` counts as a promotion. `null` means only "created in this write". **Role source:** callers rerun `recalculate` on the claims as they were before the change, so there is no schema change. `canMarkSold` also takes the claims from before the edit, and a note about this was added to S-15. **Quantity 0 or not a whole number:** `unavailable: true`, with no holders. `canMarkSold` refuses these items. The decisions README now gives D-027 as the next free ID. In the engine, `previousRole` gains `"sold"` and `"ended"`, `RecalcResult` gains `unavailable`, and a `validQuantity` guard is used in both functions.
+
+### Verified
+
+- **Gate:** `npm run check`, exit 0 on the first run with no WebKit flake, so no rerun was needed. Vitest 218/218 (12 files), Playwright 16/16, size 0.7 KB of 50 KB, `pii-scan: 78 files, 0 finding(s)`.
+- **Red, then green:** I ran `queue.test.ts` on `git archive` copies of each commit. At `c12f2b8`, 26 tests fail and 61 pass (87 total). Every failure is an `AssertionError` on the new behaviour: `unavailable` is undefined, `promotedAt` is null where `now` is expected, `promoted` is `[]` where `[1]` is expected, and `canMarkSold` accepts NaN, 2.5 or `"3"`. There are no import, type or compile errors. At `adefd76`, 87/87 pass. `adefd76` touches only `src/domain/queue.ts`, with no test edits.
+- **The 4 changed tests are legitimate, not weakened:**
+  - Three T-06 tests and the "undo a release, formerly waiting" test now pass `"sold"`/`"ended"` instead of `null` for the restored claim. This is the input contract in D-026 §2.
+  - Each test keeps all of its old role, demotion and cleared-`promotedAt` assertions. The only flipped expectation is the restored claim's own stamp: from `null`/`promoted: []` to `now`/`promoted: [id]`. That is the "accepted cost" written in D-026 §1.
+  - Two tests gained assertions (claim 2's original `promotedAt` is kept, and the exact `changes` value is checked).
+  - The idempotence test now persists `out.role` directly. It previously mapped sold/ended to `null`. This follows D-026 §2 and still asserts that the second run gives no changes.
+- **D-026 matches the tests:**
+  - §1: covered by the F1 repro, the restored-from-ended test, restored claims landing as waiters (not stamped), `"holder"` not promoted, and `null` not stamped.
+  - §2: this is the caller's contract. It shows up in the test header comment and the idempotence test.
+  - §3: quantity 0 gives `unavailable` true and `soldOut` false, and invalid quantities (NaN, ±Infinity, -1, 2.5, `"3"`, undefined, null) give `unavailable`, no holders, and a `canMarkSold` refusal with a plain reason that doesn't contain NaN, undefined or Infinity. All tested. One wording mismatch is listed under S4-a.
+- **Mutation run** on a scratch copy of `adefd76`, running `queue.test.ts` (87 tests) after each mutant. The script is at a scratch script outside the repo (not kept).
+
+| Mutant | Result |
+|---|---|
+| M1 sort by string ID | Red, 2 |
+| M2 `active < unitsLeft` | Red, 36 |
+| M3 `unitsLeft + 1` | Red, 31 |
+| M4 keep `promotedAt` on demotion | Red, 14 |
+| M5 / N1 treat `previousRole` null as a promotion | Red, 5 |
+| M6 drop the `max(0, …)` clamp | Red, 1 |
+| M7 `soldOut = unitsLeft === 0` (**survived before**) | **Red, 4** |
+| M8 `canMarkSold` `>` instead of `>=` | Red, 2 |
+| M9 no sort | Red, 2 |
+| M10 keep `promotedAt` on a released claim | Red, 1 |
+| M11a a new holder keeps a stale `promotedAt` (**survived before**) | **Red, 1** |
+| M11b a promoted holder keeps a stale `promotedAt` (`?? now`) | **Red, 2** |
+| M12 never report demotions | Red, 6 |
+| M13 refuse to sell a waiting claim | Red, 1 |
+| N2 `"sold"` previousRole is not a promotion | Red, 5 |
+| N3 `"ended"` previousRole is not a promotion | Red, 6 |
+| N4 `"sold"`/`"ended"` handled like `null` | Red, 9 |
+| N5 accept non-integers (2.5 available) | Red, 2 |
+| N6 coerce numeric strings (`"3"`) | Red, 2 |
+| N7 quantity 0 not unavailable | Red, 2 |
+| N8 `canMarkSold` skips the validity check | Red, 6 |
+| N9 `canMarkSold` skips the quantity-0 check | Survives (still refused, see S4-b) |
+| N10 `soldOut` ignores `unavailable` | Survives (see S4-c) |
+| N11 unavailable waiters get `itemSold` | Red, 1 |
+| N12 allow negatives (`>= -1`) | Red, 1 |
+| N13 `freeUnits` not clamped | Red, 11 |
+| N14 unavailable items still get holders | Red, 3 |
+| N15 `validQuantity` rejects 0 too (only changes the message) | Survives (see S4-b) |
+
+Both mutants that survived the first review (M7, M11) now fail. 25 of 28 are killed. The 3 survivors change only a refusal message or the `soldOut` value on an item that is already hidden as unavailable.
+
+- **Hygiene:** the diff since `cf9a241` covers 5 files, all expected. There are no `console`, `debugger`, `.only` or `.skip` lines and no new dependencies. Test data is synthetic: numeric IDs, ISO timestamps, no people.
+
+### Findings (worst first)
+
+None at S1 to S3.
+
+- **S4-a (docs): D-026 §3 says quantity 0 means "no holders, no waiting list", but the engine keeps claims as `waiting` with positions and reports `waitingCount`.** The test file explains this on purpose ("data is kept and restoring the quantity restores the line"), and I think that behaviour is right. The decision text should say it, so that S-06/S-11 know not to show "N waiting" or allow joins when `unavailable` is true. The API must refuse new reservations on an unavailable item: the engine doesn't block joins.
+- **S4-b (coverage of messages): no test pins which reason `canMarkSold` gives for quantity 0.** If the quantity-0 branch is deleted, the item is still refused, but with "All 0 units are already sold. Undo another sale first." (N9). If 0 is treated as invalid, the reason becomes "isn't a whole number" (N15). Both messages mislead the seller, but the item is still refused. Separately, -1 is refused with "isn't a whole number", which is inaccurate wording for a negative number.
+- **S4-c: when an item has quantity 0 and at least one sold claim, `soldOut` is false, and no test fixes that value.** Mutant N10 survives. D-026 says unavailable wins, and the item is hidden either way. Pin it with a test if S-06 ever reads `soldOut` before `unavailable`.
+- **S4-d (docs): the decisions README index has no rows for D-024, D-025 or D-026.** Only the "next free ID" line was updated. The README says to update both.
+- **Observation, not a finding:** a temporary bad `Quantity` value (for example, text typed by mistake) demotes all holders and clears their `promotedAt`. Fixing the value promotes them again with a new stamp and new `To do` rows. Line order is kept, so no reservation is lost. This follows from D-026 ("nobody gets a hold on bad data"), but the seller should know about it at G1.
+
+### Sign-off
+
+- Merge S-02 to `main`: **yes.** S4-a and S4-d are PM doc edits and can go in any later commit. S4-b and S4-c are optional tests.
+
+### Not verified
+
+- The caller side of D-026 §2 (rerunning `recalculate` on the claims from before the change under the lock, and S-15 rebuilding those claims from the edit event's old value). This can't be tested until S-11, S-14 and S-15 exist. It is the main integration risk: if callers pass `null` for everyone, nobody is ever stamped. S-11 and S-15 need an API-level test that a waiter promoted by a back-out or sale gets `Promoted at` and a `To do` row.
+- Mutants were run against `queue.test.ts` only, not the whole suite.
+- No UI, so no viewport or screenshot checks. Sheets, triggers and the lock were not examined.
