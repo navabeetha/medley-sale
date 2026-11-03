@@ -12,6 +12,7 @@ One dated entry per story verified (see `docs/qa/README.md`). No real names, num
 | T-04 (domain half) | S-02 | Automated | 2026-11-03 | Pass. New higher ID is S-11's job |
 | T-06 (domain half) | S-02 | Automated | 2026-11-03 | Pass for the cases tested. See S-02 F1 (a restored claim is never stamped) |
 | T-07 (domain half: overflow detection) | S-02 | Automated (`canMarkSold`) | 2026-11-03 | Pass. Revert and cell note are S-15. See S-02 F2 (NaN quantity) |
+| T-17 (fixture half) | S-03 | Automated (`test/unit/migrate.test.ts`, in-memory fake) | 2026-11-03 | Pass on the fake. Real-adapter behaviour not verified. See S-03 B1 to B4 and F5 |
 
 ---
 
@@ -337,3 +338,133 @@ None at S1 to S3.
 - Live site returns 200 with title, viewport, referrer, robots and CSP meta tags. `/private/`, `/.git/`, `/.git/config`, `/BUILD_BRIEF.md` return 404.
 - `playwright install --with-deps` works on the runner.
 - Phone-viewport rendering covered by the CI e2e profiles; an on-device look is left to G1.
+
+## 2026-11-04: S-03 Sheet schema and migration (scrubStaging, migrate, Apps Script adapter)
+
+Branch `S-03-sheet-schema-migration`, commits f162cae (red), 601408e (green), ea37f67 (adapter and build), diffed against `main` 4fdb806. QA by the QA agent. No clasp was run and no sheet was touched. Every probe used the synthetic fixture and `+91 90000 000xx`-style digits.
+
+### What changed
+
+- `src/api/sheet.ts`: a minimal Spreadsheet/Tab interface. `src/api/migrate.ts`: `scrubStaging()` and `migrate()`, which are pure and run over that interface.
+- `test/fixtures/fake-sheet.ts`, `test/fixtures/staging-fixture.ts`: an in-memory fake and a synthetic fixture. `test/unit/scrub-staging.test.ts` and `test/unit/migrate.test.ts` cover T-17.
+- `src/appscript/adapter.ts` and `main.ts`: the SpreadsheetApp adapter, entry points and the token source from `Utilities.getUuid()`. `tools/build-gas.mjs` builds an IIFE bundle with top-level `scrubStaging`/`migrateSheet`. `tools/push-gas.mjs` runs clasp 3.4.1 through npx. `@types/google-apps-script` was added as a dev dependency and stated in the commit message. The size budget now skips `dist/appscript`.
+
+### Verified
+
+- **Gate:** I ran `npm ci && npm run check` fresh and it exited 0. Results: Vitest 14 files and 283 tests passed, Playwright 16 passed, size 0.7 KB of 50 KB gzipped, and `pii-scan: 89 files, 0 finding(s)`. npm audit reports 11 moderate issues in dev dependencies (not new to S-03, not chased).
+- **Tests first:** f162cae contains only stubs and tests, then 601408e adds the implementation. `.clasp.json` and `dist/` are gitignored and untracked. `.clasp.json` has `rootDir: dist/appscript`, so a push cannot upload repo files.
+- **Bundle:** `npm run build:gas` produces exactly two top-level functions, `scrubStaging` (listed first) and `migrateSheet`. Everything else is inside `var A44`. The bundle has three `console.log` calls, and all of them log counts only.
+- **Token randomness:** I took `randomBytes` out of the built bundle and ran it with a stubbed `Utilities.getUuid` backed by `crypto.randomUUID`. It produced 200,000 tokens of 16 bytes, using exactly 2 UUIDs per token. Indexes 12 and 16 of the dash-free UUID are the version and variant nibbles, so the extraction is correct. The worst per-byte chi-squared across the 16 positions was 296 (critical value about 330), and the worst per-nibble value was 27.3 (critical about 37.7). No byte is constant or biased. Without the drop, byte 6's high nibble would always be 4 (a 20,000/20,000 run), and no unit test would catch that (F8).
+- **Refusal:** the BUILD COPY check runs before any write, the check is case-sensitive, and the error contains no data. All of this is tested.
+- **Logs:** the scrub and migrate results and logs contain counts only, and this is tested with console spies.
+- **Adapter vs real SpreadsheetApp:** this was a desk check, not run live.
+  - `getGrid` guards empty tabs before `getDataRange`.
+  - Indexes are 1-based throughout.
+  - `getTitle()` maps to `Spreadsheet.getName()`, which is the file title.
+  - `requireValueInList(list, true)` is used correctly.
+  - `getSheets()` includes hidden tabs.
+  - Merged cells hold their value in the top-left cell, so they are read and written correctly.
+  - A scrub that crashes partway is safe to rerun: Person cells are simply overwritten again.
+- **Mutants:** I ran them against a scratch copy, using the two S-03 test files. Killed: phone regex needing 11+ digits, Sold written as active, and the scrub filling blank Person cells. **Survived:**
+  - removing `guardText` from the scrub
+  - scanning row 2 of every tab
+  - giving Available rows that have a Person a claim
+  - removing `claimed.add`
+  - a phone regex that accepts 9 digits
+  - treating `""` as a valid status (the tests use `null` for a blank, but real Sheets returns `""`)
+  - giving every synthetic name the same value
+  - skipping the first row when collecting used IDs
+
+### Findings (worst first)
+
+**Blockers. These must be fixed before the scrub is pushed and run on the build copy:**
+
+- **B1 (S1 latent): `migrateSheet` has no guard, and running it before the scrub leaves real names in Claims and Bookings after a "successful" scrub.** The scrub replaces only `Person` columns. `migrate` copies Person into `Name` in both new tabs.
+  - Reproduced on the fixture: running migrate then scrub returned `peopleReplaced: 6`, and all three synthetic buyer names were still in the sheet.
+  - Scenario: the seller picks `migrateSheet` from the Run dropdown by mistake (the two entries sit side by side), notices, and runs `scrubStaging`. She checks Person, the README and the headers as G0.3 asks, then says "scrub checked". Agents can then read real names from Claims and Bookings.
+  - Fix: `migrate` refuses unless the title contains BUILD COPY **and** the scrub has visibly run (for example, every non-blank item-tab Person matches `^Test Person \d+$`, which the fake can test). Also make `scrubStaging` scrub (or refuse on) the `Name`/`Number` columns of existing Claims and Bookings tabs.
+  - **My view on the guard: yes, add a BUILD COPY guard to `migrateSheet` now.** The brief (4.2) says the real sheet "stays public and in daily use… Nothing about it changes during the build". If the seller ever pastes the wrong script ID into `.clasp.json`, or copies the code into the real sheet, an unguarded migrate adds columns and tabs there and writes bearer tokens into a link-shared sheet. S-18 should lift the guard deliberately, for example with a Script Property holding the exact sheet name as confirmation, and record that in a decision.
+- **B2 (S1 latent): the scrub skips a number stored as a number.** It only checks `typeof cell === "string"`. Sheets turns an unspaced number typed alone in a cell (for example `+919000000001` or `9000000001`) into a numeric cell.
+  - Reproduced: a numeric README cell and a numeric header cell were both unchanged, and they were not counted.
+  - The phone regex `/\+?\d(?:[\s-]?\d){9,}/` also misses these synthetic forms: `90000  00001` (double space), `90000 - 00001`, `90000.00001`, `90000/00001`, `90000–00001` (en dash), `+91 (90000) 00001`, and full-width digits.
+  - It does catch: `+91-90000 00001`, the leading-zero 11-digit forms (spaced and unspaced), `(+91) 90000 00001` (leaves `(+91) [removed]`), `wa.me/91…`, `wa.me/+91-…`, `api.whatsapp.com/send?phone=91…`, and non-breaking spaces.
+  - False positives are harmless because only the README and headers are touched. For example, an ISBN or a 13-digit order number becomes `[removed]`.
+  - Fix: match on `String(cell)` for numbers. Count digits across a run with any short non-alphanumeric separators (1 to 3 characters, including `.`, `/`, `()` and dashes), and flag 10 or more.
+- **B3 (S1 latent): the scrub never sees a number hidden in a hyperlink or formula.** `getValues()` returns displayed values only.
+  - Scenario: a README cell reads "Message me on WhatsApp" and is a rich-text link (or `=HYPERLINK`) to `wa.me/91…`. The scrub reports 0 numbers, and the seller's by-eye check sees no number. D-019 then exports the copy to `.xlsx` and hyperlinks go with it. The brief (4.1) confirms the sheet uses rich-text links.
+  - Fix, either one:
+    - in code: for the README and header rows, also scan `getFormulas()` and every `getRichTextValues()` run's `getLinkUrl()`, and drop or rewrite any matching link;
+    - or in the runbook: add a G0.3 step to open every link in the README and headers and remove any WhatsApp or phone link.
+- **B4 (S2): the scrub fails open and reports success when it can't find what it should scrub.**
+  - Reproduced: if a tab's Person header is `person`, `Person name`, `Reserved by` or `Buyer`, or a title row sits above the header, that tab's names are left untouched. The total still looks plausible (3 instead of 6), with no warning.
+  - Also reproduced: if the README tab is named anything but exactly `README` (for example `Read me`), only its first row is scanned, and every number below it stays.
+  - Agents may not look at the real header names, so the code can't be tuned to them.
+  - Fix: log per-tab counts, using tab names only. Name every tab where no `Person` column was found, and say whether a `README` tab was found. Before G0.3, tell the seller the expected count from brief section 3 (7 Reserved + 3 Sold, so about 10 people).
+
+**Follow-ups (not blocking the scrub):**
+
+- **F5 (S2, must be fixed before S-18/G2): a rerun after deleting a row reuses the freed Item ID.** That attaches the old claim to a different item and drops the new reservation.
+  - Reproduced: migrate, delete the Tripod row (I-0002, claim active), add a Reserved "Kettle" row, then migrate again. Kettle gets I-0002, 0 claims are created, and Claims shows Tripod's active claim (old name) under Kettle's ID.
+  - Cause: `usedIds` is seeded only from the current item rows, not from `Claims` Item IDs.
+  - Fix: seed `usedIds` from Claims as well, or allocate above the maximum ID ever issued.
+  - Related edge, by design but undocumented: a sold-then-relisted item reserved again by hand is never migrated, because any existing claim for that Item ID blocks it. Write down that migrate is meant to run once per sheet, plus reruns to reconcile.
+- **F6 (S3): rows that make no sense are skipped without any count.**
+  - A Reserved or Sold row with a blank Person gets no claim. Reproduced: 5 claims instead of 6, with no message. After cutover, the API would treat that unit as free, which is a lost hold.
+  - An Available row with a Person is ignored. Mutant M3 (claiming such rows) survives, so the current skip is not pinned by any test.
+  - A Sold row whose price is text gets a blank Sold price.
+  - Fix: log a count of each case, and add tests.
+- **F7 (S3, unconfirmed): some notes and comments may survive the scrub.**
+  - `clearNote()` runs on `getDataRange()` only. A note on an otherwise empty cell outside the data range is probably neither counted nor cleared. Use the full `getRange(1,1,maxRows,maxCols)`.
+  - Threaded comments can't be removed by the script. The log tells the seller "Comments panel, Delete all". I'm not sure Sheets has a "Delete all" control: check the wording, and mention resolved comments.
+- **F8 (S3): `randomBytes` in `main.ts` is logic in an untested file.** I verified it statistically (above), but a regression such as dropping the nibble filter or reading only one UUID would ship unnoticed. Move it to a module with `getUuid` injected, and test the length, nibble removal and the count of UUIDs used.
+- **F9 (S4): the OAuth scope is broader than it needs to be.** There are no `oauthScopes` and no `@OnlyCurrentDoc`, so the seller will be asked to grant access to *all* her spreadsheets, the real sheet included. Add `@OnlyCurrentDoc` or the `spreadsheets.currentonly` scope. That lowers what any bug or `openById` could reach, and makes the consent screen less alarming.
+- **F10 (S4): two problems with how clasp is pinned and pushed.**
+  - The scanner workaround in `tools/push-gas.mjs` (building `name@version` at runtime) has no data risk. But it teaches "split the string to get past the scanner". Fix the scanner instead: an "email" whose domain is all numeric segments (`3.4.1`) is not an email.
+  - `npx -y` fetches clasp with no lockfile integrity, and clasp holds the seller's Google OAuth token. Make it a pinned dev dependency, which only needs a one-line reason under rule 5.
+- **F11 (S4): the fake doesn't behave like real Sheets in four ways.**
+  - `sheet.ts` says "Strings are stored exactly as given". Real `setValue`/`appendRow` parse input: the guard apostrophe is not returned by `getValue`, `1/2` becomes a date, and `00123` becomes 123. A hex token is all digits, or digits with one `e`, about once in 10^6 tokens, and Sheets would then read it as a number.
+  - The fake keeps `null` for blank cells, where real Sheets returns `""`.
+  - The fake keeps ragged rows, where real Sheets returns rectangular ones.
+  - The fake writes a new column at the header row's length. Real Sheets writes it at `getLastColumn()+1`. Real is the safer behaviour, but the tests don't model it.
+  - S-04 onwards must not rely on the fake's version of any of these.
+- **F12 (S4): small test and code gaps.**
+  - The fixture comment promises "a quantity-3 row" that doesn't exist.
+  - `idsAssigned` is only asserted as `>= 11`.
+  - The surviving mutants are listed above.
+  - `tsconfig` makes the Apps Script globals visible to `src/site` code too.
+  - migrate reads the whole grid once per row (O(n²)). That is fine at 65 rows.
+- **Observation:** the build copy's version history will keep the pre-scrub values. Agents must never open it. Owner-only sharing and the `.xlsx` export (which has no history) keep it contained.
+
+### Verdict
+
+**Blocked for pushing and running the scrub** until B1 to B4 are fixed, each starting with a failing test:
+
+1. `migrate` refuses unless the title contains BUILD COPY and the scrub has run, and the scrub handles Claims/Bookings `Name`/`Number`.
+2. Numeric cells are scanned, and the separators the regex accepts are widened.
+3. Hyperlink URLs and formulas in the README and headers are scrubbed, or G0.3 gets an explicit step to check links by hand.
+4. The scrub logs per-tab counts and names any tab with no Person column and a missing README tab.
+
+F5 must be fixed before S-18. F6 to F12 can follow. The pure logic is otherwise sound, and the token source is correct.
+
+### Not verified (manual or later)
+
+- Nothing was run against real SpreadsheetApp. These adapter behaviours are desk-checked only:
+  - `clearNote` scope
+  - apostrophe handling
+  - `appendRow` parsing
+  - data validation on rows 2 to 1000
+  - the To do / Sold formulas evaluating
+  - object (chart) sheets in `getSheets()`
+- **G0.3 manual check, after the blockers are fixed.** The seller runs `scrubStaging` alone, then:
+  - reads the per-tab log against about 10 people;
+  - opens every item tab, the Template and any extra tab, and checks that every Person cell reads `Test Person N`;
+  - reads every README cell and every header, including hidden tabs, rows and columns;
+  - hovers over or opens every link in the README and the headers;
+  - checks that there are no notes, and deletes every comment thread, including resolved ones;
+  - confirms no Claims or Bookings tabs exist yet.
+- After the migration on the build copy (a live check):
+  - the To do and Sold formulas render;
+  - State validation rejects other values;
+  - a formula-like name shows as text;
+  - a second run reports all zeros.
+- The npm audit moderates were not reviewed.
