@@ -1,0 +1,32 @@
+# Private data: exports only, never committed (brief 11.1, 11.6)
+private/
+
+# Env files and secrets
+.env
+.env.*
+
+# Apps Script / clasp: script ID and credentials stay local (D-016 notes)
+.clasp.json
+.clasprc.json
+
+# Build output and dependencies
+node_modules/
+dist/
+
+# Test artefacts
+test-results/
+playwright-report/
+coverage/
+
+# Python tool caches (photo pipeline)
+__pycache__/
+*.pyc
+.venv/
+
+# OS and editor junk
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp
+.idea/
+.vscode/
