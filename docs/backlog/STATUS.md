@@ -1,9 +1,9 @@
 # Status board
 
-*Maintained by the PM and updated after every story. Last updated: 2026-11-03 (S-01 QA signed off).*
+*Maintained by the PM and updated after every story. Last updated: 2026-11-03 (S-02 done).*
 
 **Scope:** MVP only (brief Section 8), 43 points in 4 slices, worked in order.
-**Now:** S-01 merged locally, QA signed off; first push waits on the seller's two G0.1 steps below. **Next:** first push and deploy check, then S-02.
+**Now:** S-01 and S-02 merged locally, QA signed off. Nothing pushed yet. **Next:** first push and deploy check (G0.1), then G0.2 so S-03 can start. Every remaining Slice 1 story depends on S-03.
 
 ## Gates
 
@@ -27,25 +27,25 @@ G0 is staged per [D-018](../decisions/D-018-g0-in-stages.md). Steps: [docs/runbo
 
 | Backlog | Ready | In progress | In QA | Done |
 |---|---|---|---|---|
-| S-03 to S-18 | S-02 | none | S-01 (deploy check pending first push) | none |
+| S-04 to S-18 | S-03 (blocked by G0.2) | none | S-01 (deploy check pending first push) | S-02 |
 
 ## Slices
 
 | Slice | Stories | Pts | Done pts | Exit | Status |
 |---|---|---|---|---|---|
-| 1. See the sale | S-01 to S-08 | 20 | 0 | Catalogue live, and D-001 proven | Not started |
+| 1. See the sale | S-01 to S-08 | 20 | 5 | Catalogue live, and D-001 proven | Not started |
 | 2. Reserve | S-09 to S-13 | 11 | 0 | Reserve through to the WhatsApp URL | Not started |
 | 3. Back out and sell | S-14 to S-16 | 8 | 0 | Full loop on staging, then G1 | Not started |
 | 4. Release | S-17, S-18 | 4 | 0 | Link ready for the group (G2) | Not started |
-| **Total** | | **43** | **0** | | |
+| **Total** | | **43** | **5** | | |
 
 ## Stories
 
 | ID | Title | Pts | Slice | Depends on | Status | Gate |
 |---|---|---|---|---|---|---|
 | [S-01](stories/S-01-scaffold-ci-pages.md) | Scaffold, CI and Pages deploy | 2 | 1 | none | In QA: signed off, deploy check pending | G0.1 for deploy |
-| [S-02](stories/S-02-queue-engine.md) | Queue engine with quantity | 5 | 1 | S-01 | Ready | |
-| [S-03](stories/S-03-sheet-schema-migration.md) | Sheet schema and migration | 3 | 1 | S-01 | Backlog | G0.2, G0.3 |
+| [S-02](stories/S-02-queue-engine.md) | Queue engine with quantity | 5 | 1 | S-01 | Done (QA signed off) | |
+| [S-03](stories/S-03-sheet-schema-migration.md) | Sheet schema and migration | 3 | 1 | S-01 | Ready, blocked by G0.2 | G0.2, G0.3 |
 | [S-04](stories/S-04-catalogue-api.md) | Catalogue API | 2 | 1 | S-02, S-03 | Backlog | D-001 go or no-go |
 | [S-05](stories/S-05-photo-pipeline.md) | Photo pipeline | 2 | 1 | S-03 | Backlog | Export after G0.3 |
 | [S-06](stories/S-06-catalogue-screen.md) | Catalogue screen | 3 | 1 | S-04 | Backlog | |
