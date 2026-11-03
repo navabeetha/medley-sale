@@ -30,3 +30,7 @@ desktop.ini
 *.swp
 .idea/
 .vscode/
+
+# Sheet exports must never be committed, wherever they sit (brief 11.6)
+*.xlsx
+*.xls

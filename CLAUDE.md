@@ -56,4 +56,6 @@ Also stop at the Section 11.5 conditions: anything contradicting a Section 5 dec
 
 ## Gate command
 
-**TBD in S-01.** Expected: `npm ci && npm test`, plus typecheck, lint, size budget and the personal-data and secrets scan. S-01 replaces this section with the exact command.
+`npm ci && npm run check`
+
+`check` runs, in order: `tsc --noEmit`, `eslint .`, `npm test` (Vitest unit, then Playwright smoke on Chromium and WebKit in Pixel 7 and iPhone 14 profiles), `npm run size` (builds, then the gzip size budget, D-022) and `npm run pii` (personal-data and secrets scan of git-tracked files). First time on a machine: `npx playwright install chromium webkit`. CI and the Pages deploy run the same command.
