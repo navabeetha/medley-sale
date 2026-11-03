@@ -8,12 +8,15 @@ import { fileURLToPath } from "node:url";
 // Files whose content is machine-generated and full of hashes.
 const SKIP_CONTENT = new Set(["package-lock.json"]);
 
-const SYNTHETIC_PHONE = /^(?:91)?90000000\d{2}$/;
-const ALLOWED_EMAIL = [/@users\.noreply\.github\.com$/i, /^noreply@anthropic\.com$/i];
+const SYNTHETIC_PHONE = /^(?:91|0091)?90000000\d{2}$/;
+const ALLOWED_EMAIL = [/@users\.noreply\.github\.com$/i, /^noreply@anthropic\.com$/i, /^noreply@github\.com$/i];
 
 const EMAIL = /[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+/g;
 // Candidate phone: optional +, then digits with single space/hyphen/bracket separators.
-const PHONE = /(?<![\w.+-])(\+?)(\(?\d[\d\s\-()]{7,18}\d)(?![\w-])/g;
+// Separators: space, hyphen, brackets, dot and slash.
+const PHONE = /(?<![\w.+/-])(\+?)(\(?\d[\d\s\-()./]{7,18}\d)(?![\w-])/g;
+// Percent-encoded @ (mailto links, query strings).
+const ENCODED_EMAIL = /[A-Za-z0-9._+-]+%40[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+/gi;
 const SHEET_URL = /docs\.google\.com\/spreadsheets/i;
 const SHEET_ID_NEAR = /spreadsheets[^\n]{0,80}?(?<![A-Za-z0-9_-])[A-Za-z0-9_-]{44}(?![A-Za-z0-9_-])/i;
 const SHEET_OTHER = /openById\(|drive\.google\.com|docs\.google\.com\/(?:document|forms|presentation|file)/i;
@@ -55,7 +58,10 @@ const SECRETS = [
   /\bya29\.[A-Za-z0-9_-]{20,}/,
   /\bsk-(?:ant-)?[A-Za-z0-9_-]{20,}/,
   /-----BEGIN [A-Z ]*PRIVATE KEY-----/,
-  /\b(?:secret|token|passw(?:or)?d|api[_-]?key|client[_-]?secret)\w*["']?\s*[:=]\s*["'][A-Za-z0-9/+_.=-]{16,}["']/i,
+  /\bGOCSPX-[A-Za-z0-9_-]{16,}/,
+  // Booking links carry a bearer token in the fragment (brief 4.3).
+  /#\/b\/[A-Za-z0-9_-]{16,}/,
+  /(?:secret|token|passw(?:or)?d|api[_-]?key|client[_-]?secret)\w*["']?\s*[:=]\s*["'][A-Za-z0-9/+_.=-]{16,}["']/i,
 ];
 
 function isPhone(sep, body) {
@@ -63,7 +69,7 @@ function isPhone(sep, body) {
   if (SYNTHETIC_PHONE.test(digits)) return false;
   if (sep === "+") return digits.length >= 10 && digits.length <= 15;
   if (/^[6-9]\d{9}$/.test(digits)) return true; // Indian mobile
-  return /^91[6-9]\d{9}$/.test(digits) || /^0[6-9]\d{9}$/.test(digits);
+  return /^(?:0091|91)[6-9]\d{9}$/.test(digits) || /^0[6-9]\d{9}$/.test(digits);
 }
 
 export function scanText(file, text, blocked = []) {
@@ -74,6 +80,9 @@ export function scanText(file, text, blocked = []) {
     for (const m of content.matchAll(PHONE)) if (isPhone(m[1], m[2])) add(line, "phone");
     for (const m of content.matchAll(EMAIL)) {
       if (!ALLOWED_EMAIL.some((re) => re.test(m[0]))) add(line, "email");
+    }
+    for (const m of content.matchAll(ENCODED_EMAIL)) {
+      if (!ALLOWED_EMAIL.some((re) => re.test(m[0].replace(/%40/i, "@")))) add(line, "email");
     }
     if (SHEET_URL.test(content) || SHEET_ID_NEAR.test(content) || SHEET_OTHER.test(content) || hasBareId(content)) add(line, "sheet");
     if (SECRETS.some((re) => re.test(content))) add(line, "secret");
@@ -91,6 +100,9 @@ export function scanPaths(paths) {
     const out = [];
     if (/^private\//.test(p)) out.push({ file: p, line: 0, rule: "tracked-private" });
     if (/\.xlsx$/i.test(p)) out.push({ file: p, line: 0, rule: "tracked-xlsx" });
+    if (/(?:^|\/)\.clasp\.json$/.test(p)) out.push({ file: p, line: 0, rule: "tracked-clasp" });
+    if (/(?:^|\/)\.env(?:\.[^/]*)?$/.test(p)) out.push({ file: p, line: 0, rule: "tracked-env" });
+    if (/\.(?:csv|ods|xls)$/i.test(p)) out.push({ file: p, line: 0, rule: "tracked-export" });
     return out;
   });
 }
