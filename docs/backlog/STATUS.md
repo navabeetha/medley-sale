@@ -1,15 +1,15 @@
 # Status board
 
-*Maintained by the PM and updated after every story. Last updated: 2026-11-03 (docs setup).*
+*Maintained by the PM and updated after every story. Last updated: 2026-11-03 (S-01 QA signed off).*
 
 **Scope:** MVP only (brief Section 8), 43 points in 4 slices, worked in order.
-**Now:** docs set up. **Next:** walk the seller through G0.1 (GitHub repo), and start S-01 locally.
+**Now:** S-01 merged locally, QA signed off; first push waits on the seller's two G0.1 steps below. **Next:** first push and deploy check, then S-02.
 
 ## Gates
 
 | Gate | Stage | What | Status |
 |---|---|---|---|
-| G0 | G0.1 | Public GitHub repo, Pages from Actions, commit identity | Not started |
+| G0 | G0.1 | Public GitHub repo, Pages from Actions, commit identity | Repo and Pages done; secret and backup clean-up pending |
 | G0 | G0.2 | Build copy, attached script, `clasp login` | Not started |
 | G0 | G0.3 | Scrub run and checked by eye | Not started |
 | G1 | | Staging review on phone, end of Slice 3 | Not started |
@@ -19,14 +19,15 @@ G0 is staged per [D-018](../decisions/D-018-g0-in-stages.md). Steps: [docs/runbo
 
 ## Waiting on the seller
 
-1. **G0.1:** confirm the commit email choice ([D-023](../decisions/D-023-commit-email-privacy.md)), then create the public `medley-sale` repo. The PM will walk her through it step by step.
-2. Review the proposed decisions D-016 to D-023 when convenient. They stand as proposed meanwhile.
+1. **G0.1:** add the `PII_BLOCKED_WORDS` repo secret on GitHub.
+2. **G0.1:** run the one-line clean-up that deletes the local pre-rewrite backup (R2 in the QA log).
+3. Review the proposed decisions D-016 to D-023 when convenient. They stand as proposed meanwhile.
 
 ## Board
 
 | Backlog | Ready | In progress | In QA | Done |
 |---|---|---|---|---|
-| S-02 (waits on S-01), S-03 to S-18 | S-01 | none | none | none |
+| S-03 to S-18 | S-02 | none | S-01 (deploy check pending first push) | none |
 
 ## Slices
 
@@ -42,8 +43,8 @@ G0 is staged per [D-018](../decisions/D-018-g0-in-stages.md). Steps: [docs/runbo
 
 | ID | Title | Pts | Slice | Depends on | Status | Gate |
 |---|---|---|---|---|---|---|
-| [S-01](stories/S-01-scaffold-ci-pages.md) | Scaffold, CI and Pages deploy | 2 | 1 | none | Ready | G0.1 for deploy |
-| [S-02](stories/S-02-queue-engine.md) | Queue engine with quantity | 5 | 1 | S-01 | Backlog | |
+| [S-01](stories/S-01-scaffold-ci-pages.md) | Scaffold, CI and Pages deploy | 2 | 1 | none | In QA: signed off, deploy check pending | G0.1 for deploy |
+| [S-02](stories/S-02-queue-engine.md) | Queue engine with quantity | 5 | 1 | S-01 | Ready | |
 | [S-03](stories/S-03-sheet-schema-migration.md) | Sheet schema and migration | 3 | 1 | S-01 | Backlog | G0.2, G0.3 |
 | [S-04](stories/S-04-catalogue-api.md) | Catalogue API | 2 | 1 | S-02, S-03 | Backlog | D-001 go or no-go |
 | [S-05](stories/S-05-photo-pipeline.md) | Photo pipeline | 2 | 1 | S-03 | Backlog | Export after G0.3 |
