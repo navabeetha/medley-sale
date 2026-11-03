@@ -84,8 +84,14 @@ const TEMPLATE = "Template";
 const README = "README";
 const NON_ITEM_TABS = new Set([README, TEMPLATE, CLAIMS, BOOKINGS, TODO, SOLD]);
 
-// Phone-like: 10 or more digits, allowing spaces or dashes between them.
-const PHONE_LIKE = /\+?\d(?:[\s-]?\d){9,}/g;
+// Phone-like: 10 or more digits (ASCII or full-width), with up to three
+// non-alphanumeric characters (spaces, dashes, dots, slashes, brackets) between
+// any two. False positives are harmless: only README cells and header rows are
+// touched, and a cleared cell is marked "[removed]".
+const PHONE_LIKE = /\+?[0-9\uFF10-\uFF19](?:[^\p{L}\p{N}]{0,3}[0-9\uFF10-\uFF19]){9,}/gu;
+const hasPhone = (text: string): boolean => new RegExp(PHONE_LIKE.source, "u").test(text);
+/** The scrub's own name format; migrate refuses Person values that differ. */
+const SCRUBBED_NAME = /^Test Person \d+$/;
 
 // ---- Small helpers
 
@@ -120,6 +126,9 @@ function maxNumber(values: CellValue[]): number {
 
 // ---- scrubStaging
 
+/** Tabs the scrub neither flags nor treats as item tabs. */
+const SYSTEM_TABS = new Set([README, CLAIMS, BOOKINGS, TODO, SOLD]);
+
 export function scrubStaging(ss: Spreadsheet, opts: ScrubOptions = {}): ScrubResult {
   if (!ss.getTitle().includes(BUILD_COPY_MARKER)) {
     throw new Error(`scrubStaging refused: the file title must contain "${BUILD_COPY_MARKER}"`);
@@ -127,37 +136,95 @@ export function scrubStaging(ss: Spreadsheet, opts: ScrubOptions = {}): ScrubRes
   let peopleReplaced = 0;
   let numbersRemoved = 0;
   let commentsRemoved = 0;
+  const tabs: Record<string, TabScrubCounts> = {};
+  const tabsWithoutPerson: string[] = [];
+  let readmeFound = false;
+  const nextName = (): string => `Test Person ${++peopleReplaced}`;
 
   for (const tab of ss.getTabs()) {
+    const counts: TabScrubCounts = { peopleReplaced: 0, numbersRemoved: 0, commentsRemoved: 0 };
+    tabs[tab.name] = counts;
     const grid = tab.getGrid();
-    // Seller's number: every README cell, and the header row of every tab.
+    const head = grid[0] ?? [];
+    const personCol = colOf(head, PERSON);
+    const isClaimsLike = tab.name === CLAIMS || tab.name === BOOKINGS;
+    if (tab.name === README) readmeFound = true;
+
+    // Seller's number: every cell of a tab with no Person column (README, notes,
+    // anything unrecognised) and only the header row of an item tab.
+    const headerOnly = personCol > 0;
+    const formulas = new Map(tab.getFormulas().map((f) => [`${f.row},${f.col}`, f.formula]));
+    const links = new Map(tab.getLinks().map((l) => [`${l.row},${l.col}`, l.url]));
+    const cells = new Map<string, CellValue>();
     grid.forEach((row, r) => {
-      if (tab.name !== README && r > 0) return;
-      row.forEach((cell, c) => {
-        if (typeof cell !== "string") return;
-        const cleaned = cell.replace(PHONE_LIKE, "[removed]");
-        if (cleaned === cell) return;
-        tab.setCell(r + 1, c + 1, guardText(cleaned));
-        numbersRemoved++;
-      });
+      if (headerOnly && r > 0) return;
+      row.forEach((cell, c) => cells.set(`${r + 1},${c + 1}`, cell));
     });
+    // Formula and link cells can sit where getGrid() returned nothing.
+    for (const key of [...formulas.keys(), ...links.keys()]) {
+      if (headerOnly && Number(key.split(",")[0]) > 1) continue;
+      if (!cells.has(key)) cells.set(key, null);
+    }
+    for (const [key, cell] of cells) {
+      const [row, col] = key.split(",").map(Number) as [number, number];
+      const display = cell === null || cell === undefined ? "" : typeof cell === "object" ? "" : String(cell);
+      const textHit = typeof cell !== "boolean" && hasPhone(display);
+      const formulaHit = hasPhone(formulas.get(key) ?? "");
+      const linkHit = hasPhone(links.get(key) ?? "");
+      if (!textHit && !formulaHit && !linkHit) continue;
+      if (textHit || formulaHit) {
+        // Becomes plain text with the number removed (this also drops the formula and link).
+        const cleaned = display.replace(PHONE_LIKE, "[removed]") || "[removed]";
+        tab.setCell(row, col, guardText(cleaned));
+      }
+      if (linkHit) tab.setLink(row, col, null);
+      counts.numbersRemoved++;
+    }
+
     // People: every non-blank Person cell becomes a synthetic name.
-    const personCol = colOf(grid[0] ?? [], PERSON);
     if (personCol) {
       for (let r = 1; r < grid.length; r++) {
         if (isBlank(grid[r]![personCol - 1])) continue;
-        peopleReplaced++;
-        tab.setCell(r + 1, personCol, `Test Person ${peopleReplaced}`);
+        counts.peopleReplaced++;
+        tab.setCell(r + 1, personCol, nextName());
       }
+    } else if (isClaimsLike) {
+      // Migrated tabs copy names and numbers from the sheet: scrub those too.
+      const nameCol = colOf(head, "Name");
+      const numberCol = colOf(head, "Number");
+      for (let r = 1; r < grid.length; r++) {
+        if (nameCol && !isBlank(grid[r]![nameCol - 1])) {
+          counts.peopleReplaced++;
+          tab.setCell(r + 1, nameCol, nextName());
+        }
+        if (numberCol && !isBlank(grid[r]![numberCol - 1])) {
+          counts.numbersRemoved++;
+          tab.setCell(r + 1, numberCol, "");
+        }
+      }
+    } else if (!SYSTEM_TABS.has(tab.name) && grid.slice(1).some((row) => row.some((v) => !isBlank(v)))) {
+      tabsWithoutPerson.push(tab.name);
     }
-    commentsRemoved += tab.clearComments();
+    counts.commentsRemoved = tab.clearComments();
+    numbersRemoved += counts.numbersRemoved;
+    commentsRemoved += counts.commentsRemoved;
+    opts.log?.(
+      `scrubStaging: tab "${tab.name}": ${counts.peopleReplaced} people, ${counts.numbersRemoved} numbers, ${counts.commentsRemoved} notes`,
+    );
   }
 
-  const result: ScrubResult = {
-    peopleReplaced, numbersRemoved, commentsRemoved,
-    tabs: {}, tabsWithoutPerson: [], readmeFound: false, // stub (S-03 fix round)
-  };
-  opts.log?.(`scrubStaging: ${peopleReplaced} people replaced, ${numbersRemoved} cells cleared of numbers, ${commentsRemoved} comments removed`);
+  const result: ScrubResult = { peopleReplaced, numbersRemoved, commentsRemoved, tabs, tabsWithoutPerson, readmeFound };
+  if (tabsWithoutPerson.length > 0) {
+    opts.log?.(
+      `scrubStaging: WARNING no Person column found, names NOT replaced, check by hand: ${tabsWithoutPerson.map((n) => `"${n}"`).join(", ")}`,
+    );
+  }
+  opts.log?.(
+    readmeFound
+      ? "scrubStaging: README tab found (every cell scanned)"
+      : 'scrubStaging: WARNING no tab is named exactly "README": check every tab by hand',
+  );
+  opts.log?.(`scrubStaging: ${peopleReplaced} people replaced, ${numbersRemoved} cells cleared of numbers, ${commentsRemoved} notes removed`);
   return result;
 }
 
@@ -222,8 +289,27 @@ export function migrate(ss: Spreadsheet, opts: MigrateOptions): MigrateResult {
     reservedOrSoldWithoutPerson: 0, availableWithPerson: 0, soldWithTextPrice: 0,
   };
 
-  // 1. Check every row before writing anything.
+  // 0. Guards. Only ever run on the build copy, and only after the scrub, so
+  // real names are never copied into Claims and Bookings. Nothing is written yet.
+  if (!ss.getTitle().includes(BUILD_COPY_MARKER)) {
+    throw new Error(`migrate refused: the file title must contain "${BUILD_COPY_MARKER}"`);
+  }
   const items = itemTabs(ss);
+  if (!opts.allowUnscrubbed) {
+    for (const tab of items) {
+      const grid = tab.getGrid();
+      const personCol = colOf(grid[0] ?? [], PERSON);
+      if (!personCol) continue; // validateTab reports the missing column
+      for (const r of grid.slice(1)) {
+        const p = r[personCol - 1];
+        if (!isBlank(p) && !(typeof p === "string" && SCRUBBED_NAME.test(p))) {
+          throw new Error(`migrate refused: run scrubStaging first (tab "${tab.name}" has a Person that is not a scrubbed name)`);
+        }
+      }
+    }
+  }
+
+  // 1. Check every row before writing anything.
   const rows = items.flatMap(validateTab);
 
   // 2. New tabs, State validation, To do and Sold formulas.
@@ -269,7 +355,13 @@ export function migrate(ss: Spreadsheet, opts: MigrateOptions): MigrateResult {
   }
 
   // 4. Stable IDs (kept if already set) and quantity 1 where blank.
+  // Seeded from Claims too, so the ID of a deleted row is never handed out again.
   const usedIds = new Set<string>();
+  const existingClaims = claimsT.tab.getGrid();
+  const claimsItemIdCol = colOf(existingClaims[0] ?? [], "Item ID");
+  if (claimsItemIdCol) {
+    for (const r of existingClaims.slice(1)) if (!isBlank(r[claimsItemIdCol - 1])) usedIds.add(String(r[claimsItemIdCol - 1]));
+  }
   for (const tab of items) {
     const grid = tab.getGrid();
     const idCol = colOf(grid[0]!, ID);
@@ -318,12 +410,18 @@ export function migrate(ss: Spreadsheet, opts: MigrateOptions): MigrateResult {
   let nextBooking = maxNumber(bookingGrid.slice(1).map((r) => r[colOf(bookingGrid[0] ?? [], "Booking ID") - 1] ?? null)) + 1;
 
   for (const { tab, row, status } of rows) {
-    if (status === "Available") continue;
     const grid = tab.getGrid();
+    if (status === "Available") {
+      if (!isBlank(grid[row - 1]![colOf(grid[0]!, PERSON) - 1])) result.availableWithPerson++;
+      continue;
+    }
     const head = grid[0]!;
     const cells = grid[row - 1]!;
     const person = cells[colOf(head, PERSON) - 1];
-    if (isBlank(person)) continue;
+    if (isBlank(person)) {
+      result.reservedOrSoldWithoutPerson++;
+      continue;
+    }
     const itemId = String(cells[colOf(head, ID) - 1]);
     if (claimed.has(itemId)) continue;
     claimed.add(itemId);
@@ -331,6 +429,7 @@ export function migrate(ss: Spreadsheet, opts: MigrateOptions): MigrateResult {
     const name = guardText(String(person));
     const item = guardText(String(cells[findCol(head, ITEM_NAME_HEADERS) - 1] ?? ""));
     const price = cells[colOf(head, PRICE) - 1];
+    if (status === "Sold" && !isBlank(price) && typeof price !== "number") result.soldWithTextPrice++;
     const now = opts.now();
     const bookingId = nextBooking++;
     // 128 bits from the injected source, as 32 hex characters (D-005).
@@ -348,7 +447,9 @@ export function migrate(ss: Spreadsheet, opts: MigrateOptions): MigrateResult {
   opts.log?.(
     `migrate: ${result.columnsAdded} columns added, ${result.tabsCreated} tabs created, ` +
       `${result.idsAssigned} IDs assigned, ${result.quantitiesSet} quantities set, ` +
-      `${result.bookingsCreated} bookings created, ${result.claimsCreated} claims created`,
+      `${result.bookingsCreated} bookings created, ${result.claimsCreated} claims created, ` +
+      `reservedOrSoldWithoutPerson ${result.reservedOrSoldWithoutPerson}, ` +
+      `availableWithPerson ${result.availableWithPerson}, soldWithTextPrice ${result.soldWithTextPrice}`,
   );
   return result;
 }
