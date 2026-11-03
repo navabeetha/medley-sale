@@ -12,7 +12,7 @@ One dated entry per story verified (see `docs/qa/README.md`). No real names, num
 | T-04 (domain half) | S-02 | Automated | 2026-11-03 | Pass. New higher ID is S-11's job |
 | T-06 (domain half) | S-02 | Automated | 2026-11-03 | Pass for the cases tested. See S-02 F1 (a restored claim is never stamped) |
 | T-07 (domain half: overflow detection) | S-02 | Automated (`canMarkSold`) | 2026-11-03 | Pass. Revert and cell note are S-15. See S-02 F2 (NaN quantity) |
-| T-17 (fixture half) | S-03 | Automated (`test/unit/migrate.test.ts`, in-memory fake) | 2026-11-03 | Pass on the fake. Real-adapter behaviour not verified. See S-03 B1 to B4 and F5 |
+| T-17 (fixture half) | S-03 | Automated (`test/unit/migrate*.test.ts`, in-memory fake) | 2026-11-04 | Pass on the fake; B1 to B4 and F5 closed (re-check). Live half after G0.3 |
 
 ---
 
@@ -468,3 +468,109 @@ F5 must be fixed before S-18. F6 to F12 can follow. The pure logic is otherwise 
   - a formula-like name shows as text;
   - a second run reports all zeros.
 - The npm audit moderates were not reviewed.
+
+## 2026-11-04 (re-check): S-03 fix round for B1 to B4 and F5 to F12
+
+Commits 7f73603 (red), f08f0fe, 7de5275 and c01426a (implementation), and 91e0d5f (two test defects fixed). QA agent. No clasp was run and no sheet was touched. Synthetic data only.
+
+### Verified
+
+- **Gate:** I ran `npm ci && npm run check` fresh and it exited 0. Vitest: 17 files, 366 tests. Playwright: 16. Size: 0.7 KB of 50 KB. `pii-scan: 93 files, 0 finding(s)`. `npm run build:gas` gives two top-level functions (`scrubStaging`, `migrateSheet`) and a manifest with only `spreadsheets.currentonly`. `allowUnscrubbed` appears in the bundle only as the check inside `migrate`. The entry point never passes it.
+- **Tests first:** 7f73603 holds the red tests.
+- **My first-review reproductions, rerun on the new code (fixture, synthetic):**
+  - **B1 closed.**
+    - migrate before the scrub: refused, and no Claims tab is created.
+    - Title without BUILD COPY: refused, even with `allowUnscrubbed`.
+    - Migrate (forced) and then scrub: no original name is left anywhere. Claims shows 6 names replaced.
+    - Scrub then migrate: runs, and no names are left.
+    - `Test Person 1 ` with a trailing space: refused, because the check is anchored.
+  - **B2 closed.** A numeric README cell and a numeric header cell both become `[removed]`. The pattern now catches all of these:
+    - a double space between the halves
+    - ` - `
+    - dot, slash and en-dash separators
+    - `+91 (90000) 00001`
+    - full-width digits
+  - **B3 closed (on the fake).** A README cell whose rich-text link points to `wa.me/91…` keeps its text and loses the link. A `=HYPERLINK("https://wa.me/91…","Chat")` cell becomes the plain text `Chat`. No links or formulas are left, and the README count is 5.
+  - **B4 closed as a warning.**
+    - A Person header of `person` or `Reserved by`, or a title row above the headers, puts the tab in `tabsWithoutPerson` and logs `WARNING … names NOT replaced, check by hand`. The names in that tab are deliberately left, so the warning is the safeguard (R1).
+    - A README named `Read me` gives `readmeFound: false` and a warning, and every cell in it is scanned.
+  - **F5 closed.** After a row is deleted, the new Reserved row gets I-0012, not the freed I-0002, and its own claim.
+- **Mutants:** 23 run against the four S-03 test files. The baseline is 135 tests, all green. **20 killed**, covering:
+  - every first-round survivor except two
+  - the title guard and the scrubbed-name guard
+  - the anchored name match
+  - link and formula removal
+  - Claims/Bookings name and number scrubbing
+  - numeric cells
+  - full-width digits
+  - the separator width
+  - `tabsWithoutPerson` and `readmeFound`
+  - Claims-seeded IDs
+  - the three F6 counts
+
+  **3 survive, all in the over-scrub direction and harmless:**
+  - also scanning row 2 of item tabs
+  - also scanning links and formulas in item-tab data rows
+  - removing `claimed.add`, since Item IDs are unique within a run
+- **F6 to F12:**
+  - F6: the three counts are in the result and the log, and are tested.
+  - F7: notes are now read and cleared across the whole tab, and the final log line now explains how to delete threaded comments by hand.
+  - F8: `uuidsToBytes` is pure and tested, including a check for constant bits. `randomBytes` asks for one UUID per 30 digits, so if the loop is ever miscounted, `uuidsToBytes` throws rather than padding.
+  - F9: the scope is set.
+  - F10: clasp is a pinned dev dependency, the workaround is gone, and the scanner ignores all-digit "domains" (tested).
+  - F11: the comment is fixed.
+  - F12: the fixture comment is fixed and `tsconfig` is split. Apps Script globals are visible only to `src/appscript` and `src/api`.
+
+### Adapter vs real Apps Script (desk check against the documented behaviour, not run)
+
+- **`getRichTextValues()` on number and formula cells.** The docs say `getRichTextValue` returns null when the cell value is not text. Numbers, dates and booleans therefore give null, and `getLinks` skips nulls without crashing. Formula cells with a text result return a value. Whatever `getLinkUrl()` reports for `=HYPERLINK`, the URL is caught anyway by `getFormulas()`, which is how B3 removes it.
+  - Remaining gap: a link attached to a cell whose value is a **number** is invisible to `getLinks` (R2).
+  - `setLink(null)` rewrites the cell as rich text from `getDisplayValue()`. That is always plain text, so it can't turn into a formula.
+- **Whole-tab notes (`getMaxRows` × `getMaxColumns`).** Each tab costs one batched `getNotes()` and, if any notes exist, one `clearNote()`. A default tab is 1,000 × 26 (26,000 cells), so each call should take well under a second. With about 6 tabs, the run should take seconds, not close to the 6-minute limit. It would only matter for tabs of millions of cells. Not measured live.
+- **`spreadsheets.currentonly`.** Everything the scrub and migrate call works on the bound file:
+  - `getActive`, `getSheets`, `getSheetByName`, `insertSheet`
+  - `getRange`, values, `setValue`, `appendRow`, `setFormula`
+  - notes
+  - `setDataValidation`, `setRichTextValue`
+  - The builders (`newDataValidation`, `newRichTextValue`) and `Utilities.getUuid`/`console` need no scope.
+  - Only `openById`, `openByUrl` and `create` need the full spreadsheets scope, and none is used.
+  - This depends on the script being **bound** to the build copy, which the runbook says it is.
+  - Later stories must add scopes explicitly: MailApp (D-013) needs `script.send_mail`, and installable triggers need `script.scriptapp`. S-04 should confirm that `getActive()` works in the web-app context.
+
+### Findings (worst first)
+
+None at S1 or S2.
+
+- **R1 (S3): "fail loud" is a log line only.** The run still ends green when `tabsWithoutPerson` is not empty or the README is missing. A non-technical seller could miss a WARNING line in the middle of the execution log. Suggested fix: `scrubStagingRun` throws a final summary error, with tab names only, after doing its work, so the editor shows red. For now, the G0.3 step below covers it.
+- **R2 (S3, unconfirmed): a hyperlink on a number cell is not detected.** If the number is itself a phone number, the value is replaced, but whether `setValue` also drops the link is undocumented. Covered by the link step in G0.3.
+- **R3 (S4): the phone pattern misses some forms.** It misses Devanagari digits and separators longer than 3 characters, such as a line break plus indentation. It over-matches date and time runs in the README, which then become `[removed]`. That's accepted, and affects the build copy only.
+- **R4 (S4): side effects of scrubbing again after migrate.** It renumbers the Claims and Bookings names, so they no longer match Person. It could also write into the spill range of the To do and Sold FILTERs if a spilled cell held a phone number. Staging only: migrate writes Number blank anyway.
+- **R5 (S4): two small inaccuracies.** The `MigrateResult` doc "All zero on a rerun" is no longer true, because the F6 counts repeat. `numbersRemoved` counts a Claims Number cell twice if it holds a phone number.
+- **R6 (S4): pinning clasp brings 2 high (zod, memory exhaustion) and more moderate advisories into the dev tree.** It's a local CLI, never shipped. Revisit when clasp releases a fix.
+
+### Verdict
+
+**Sign-off with follow-ups.** The code may be pushed to the build copy and `scrubStaging()` run. R1 and R2 are covered by the manual steps below, and R1 should be fixed before S-04 relies on the copy. R3 to R6 are optional. S-03 becomes Done only after G0.3 is confirmed and the post-migrate live check passes. Merging to `main` doesn't depend on those.
+
+### G0.3: exact steps for the seller
+
+1. In the build copy, open Extensions > Apps Script. Choose `scrubStaging` in the function list (not `migrateSheet`), then press Run. Accept the permission prompt. It should ask only about **the spreadsheet this script is installed in**. If it asks for all your spreadsheets, stop and tell the PM.
+2. Read the Execution log to the end.
+   - If any line says **WARNING**, stop and tell the PM which tab names it lists. Don't say "scrub checked".
+   - The last count should be about 10 people.
+3. Open every tab, including hidden ones (right-click the tab bar). In each tab, check every row of the Person column: each one should read `Test Person` and a number, or be blank. Also look through the Notes column for real names.
+4. Read every cell of the README tab, and the top row of every tab. Your phone number should appear nowhere. `[removed]` is expected.
+5. Hover over or click every link in the README and in the header rows. None should open WhatsApp or show a phone number. Remove any that do.
+6. Open the Comments panel (the speech-bubble icon, top right). Delete every comment thread, including resolved ones in the comment history. Then check that no cell has a small black corner triangle, which marks a note.
+7. Check that there are no tabs called Claims or Bookings yet.
+8. Tell the PM "scrub checked". Don't open version history in the build copy, and don't share the copy.
+
+### Not verified
+
+- Nothing has run on real Sheets. The rich-text, note, scope and timing points above are desk checks.
+- After migrating the build copy, a live check still needs to show that:
+  - the formulas show results
+  - State validation works
+  - a formula-like name shows as text
+  - a rerun creates nothing
+- Mutants were run against the S-03 test files only.
