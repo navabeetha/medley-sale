@@ -9,6 +9,8 @@
   },
   "scripts": {
     "build": "node tools/build.mjs",
+    "build:gas": "node tools/build-gas.mjs",
+    "push:gas": "npm run build:gas && node tools/push-gas.mjs",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "test:unit": "vitest run",
@@ -22,6 +24,7 @@
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@playwright/test": "^1.64.1",
+    "@types/google-apps-script": "2.0.13",
     "@types/node": "^26.6.6",
     "esbuild": "^0.28.2",
     "eslint": "^10.14.0",
