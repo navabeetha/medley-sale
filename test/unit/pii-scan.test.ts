@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { scanText, scanPaths } from "../../tools/pii-scan.mjs";
+import { scanText, scanPaths, loadBlockedWords } from "../../tools/pii-scan.mjs";
 
 // Fixtures are assembled from pieces so this file does not itself trip the scan.
 const rules = (text: string, file = "x.md") => scanText(file, text).map((f) => f.rule);
@@ -95,5 +95,21 @@ describe("tracked files", () => {
   });
   it("passes ordinary paths", () => {
     expect(scanPaths(["src/site/main.ts", "docs/private-notes.md", "test/fixtures/a.json"])).toEqual([]);
+  });
+});
+
+describe("blocked words (kept outside the repo)", () => {
+  // Synthetic word; real words come only from private/blocked-words.txt or the
+  // PII_BLOCKED_WORDS env var, so the public repo never contains them.
+  it("flags a blocked word in any case or with a possessive", () => {
+    expect(scanText("x.md", "Owner: Zorblax", ["zorblax"]).map((f) => f.rule)).toEqual(["blocked-word"]);
+    expect(scanText("x.md", "ask ZORBLAX's view", ["zorblax"]).map((f) => f.rule)).toEqual(["blocked-word"]);
+  });
+  it("does not flag other words or partial matches", () => {
+    expect(scanText("x.md", "zorblaxes and the seller", ["zorblax"])).toEqual([]);
+  });
+  it("reads words from env and file, trimmed, lowercased, ignoring blanks and comments", () => {
+    expect(loadBlockedWords(" Foo, bar ,,", "# note\nBaz\n\n")).toEqual(["foo", "bar", "baz"]);
+    expect(loadBlockedWords(undefined, undefined)).toEqual([]);
   });
 });
