@@ -48,7 +48,7 @@ describe("email addresses", () => {
 });
 
 describe("Google Sheet links and IDs", () => {
-  const id = "1" + "aB3_".repeat(10) + "xyz1"; // 44 chars
+  const id = "1" + "aB3_".repeat(10) + "xyz"; // 44 chars
   it("has a 44-char fixture id", () => expect(id).toHaveLength(44));
 
   it("flags a spreadsheet URL", () => {
