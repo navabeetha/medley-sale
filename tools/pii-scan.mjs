@@ -16,6 +16,13 @@ const EMAIL = /[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+/g;
 const PHONE = /(?<![\w.+-])(\+?)(\(?\d[\d\s\-()]{7,18}\d)(?![\w-])/g;
 const SHEET_URL = /docs\.google\.com\/spreadsheets/i;
 const SHEET_ID_NEAR = /spreadsheets[^\n]{0,80}?(?<![A-Za-z0-9_-])[A-Za-z0-9_-]{44}(?![A-Za-z0-9_-])/i;
+const SHEET_OTHER = /openById\(|drive\.google\.com|docs\.google\.com\/(?:document|forms|presentation|file)/i;
+// Bare 40-50 char id-like run (url-safe base64 alphabet). Checked for upper, lower and a
+// digit in code so hex digests, git SHAs and lowercase words never match; runs longer than
+// 50 (script deployment ids, integrity hashes) fail the length bounds.
+const BARE_ID = /(?<![A-Za-z0-9_-])[A-Za-z0-9_-]{40,50}(?![A-Za-z0-9_-])/g;
+const hasBareId = (content) =>
+  [...content.matchAll(BARE_ID)].some((m) => /[A-Z]/.test(m[0]) && /[a-z]/.test(m[0]) && /\d/.test(m[0]));
 // Personal words that must never be committed (e.g. the owner's first name). They are
 // never stored in this public repo: locally they come from private/blocked-words.txt
 // (gitignored, one per line, # comments), in CI from the PII_BLOCKED_WORDS secret.
@@ -68,7 +75,7 @@ export function scanText(file, text, blocked = []) {
     for (const m of content.matchAll(EMAIL)) {
       if (!ALLOWED_EMAIL.some((re) => re.test(m[0]))) add(line, "email");
     }
-    if (SHEET_URL.test(content) || SHEET_ID_NEAR.test(content)) add(line, "sheet");
+    if (SHEET_URL.test(content) || SHEET_ID_NEAR.test(content) || SHEET_OTHER.test(content) || hasBareId(content)) add(line, "sheet");
     if (SECRETS.some((re) => re.test(content))) add(line, "secret");
     if (blocked.length) {
       for (const w of content.matchAll(/\p{L}+/gu)) {
