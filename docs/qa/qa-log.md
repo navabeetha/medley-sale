@@ -133,3 +133,44 @@ R1: fixed for linear history (probe refused). Reopened as F1 for merges. R2: **o
 ### Not verified
 
 A real push to GitHub and Actions runs (the deploy criterion, manual after G0.1, steps in the first entry). Tag pushes. Force-push over an unknown remote sha. Windows or GUI clients. `--no-verify` and clones that never ran `npm install` skip the hook entirely. There is no server-side control, and GitHub push protection was not evaluated. ESLint and tsconfig strictness were not reviewed again.
+
+---
+
+## 2026-11-03 (narrow re-check): F1 to F3 fix
+
+**Branch:** `S-01-scaffold-ci-pages` at `157e9a4`. Red commit `0fa0d0c` adds `test/unit/pii-scan-merge.test.ts`. Fix commit `157e9a4` changes only `tools/pii-scan.mjs`. The owner limited the scope: this checks only the merge case and the fixes that came with it. Other leftovers go to S-17.
+**Result:** Pass. Signed off for merge to main. Signed off for first push on two conditions: R2 cleanup and the `PII_BLOCKED_WORDS` secret.
+
+### Verified
+
+- **Gate:** `npm ci && npm run check`, exit 0, first run (no WebKit teardown crash). Vitest 131/131 (11 files), Playwright 16/16, size 0.7 KB of 50 KB, `pii-scan: 73 files, 0 finding(s)`.
+- **Red to green:** I ran Vitest on a `git archive` of each commit, for the new file only. `0fa0d0c`: 7 failed, 3 passed. The failures are the two-file attribution test, the file next to the lockfile, F1a scanRevisions plus pre-push, F1b scanRevisions plus pre-push, and the CLI failing closed on a missing object. `157e9a4`: 10/10. `git diff 0fa0d0c^ HEAD -- test/` shows only the new file. No existing test was edited.
+- **Fix, by reading the diff:** both `git log` calls in `scanRevisions` use `--full-history --diff-merges=first-parent` with no pathspec. Any `diff --git` line now starts a new file, even inside a hunk (it can't be a hunk line, because hunk lines start with `+`, `-`, space or `\`). The lockfile skip is an exact basename match (`package-lock.json` or `*/package-lock.json`). The CLI history scan runs only when `rev-parse --verify HEAD^{commit}` succeeds. Any git error after that is thrown, and stderr is inherited.
+- **Probes through the real `.githooks/pre-push`** (scratch clone of the project, scratch bare remote, synthetic blocked word in `PII_BLOCKED_WORDS`, non-synthetic `+91 90000 1xxxx` number):
+  - F1a (a side branch adds and then deletes, merged `--no-ff`): push REFUSED, exit 1, phone and blocked-word findings reported for the side commit's `docs/leak.txt`. `node tools/pii-scan.mjs` (CI history mode): exit 1, the same 2 findings.
+  - F1b (an evil merge adds content, the next commit deletes it): push REFUSED, exit 1, findings reported for the merge commit's `docs/evil.txt`. CLI: exit 1, the same 2 findings.
+  - F2 (one commit, number in `docs/a-first.txt`, clean `docs/b-second.txt`): push REFUSED with the correct file name, `docs/a-first.txt`.
+  - Clean push of main plus branch to a fresh bare remote, with the remote-tracking refs deleted so nothing counts as "already pushed": ACCEPTED, exit 0, `pre-push: 29 commit(s) ... 0 finding(s)`. When the tracking refs are still there, the hook correctly counts 0 new commits.
+- **Probe-setup note:** my first attempt symlinked `node_modules` into the scratch clone. The working-tree scan then crashed with EISDIR, so the push was blocked, and the CLI printed a stack trace but exited **0**. This is the known S-17 EISDIR item. The exit-0 part is new information (see below). The probes above were rerun without the symlink.
+
+### Deferred to S-17 (owner decision, not chased)
+
+- F4: a nested `**/package-lock.json` is skipped in history content, but the working-tree scan skips only the root lockfile.
+- F5: binary content (screenshots, PDFs) is not scanned. Screenshots need a manual look.
+- EISDIR: an untracked symlinked directory crashes the working-tree scan. I saw it here as a side effect. Run directly (`node tools/pii-scan.mjs`), the crash exited with **status 0**, which is fail-open. Through the hook the push was still blocked. Not re-probed to isolate the cause. The S-17 fix should make the crash exit non-zero and skip directories.
+- False positive: a 16+ character string literal assigned to `token` is flagged "secret".
+- Carried over: there are no tests for `ci.yml` and `deploy.yml` beyond `workflows.test.ts`. Tag pushes and force-push over an unknown remote sha have not been exercised. `--no-verify` and clones without `npm install` skip the hook.
+
+### Still open, outside S-17
+
+- R2: `refs/original/*` still exists (1 ref, checked today). The pre-rewrite commits it reaches hold the blocked word. The owner must delete it before the first push: `git update-ref -d` each `refs/original/*` ref, `git reflog expire --expire=now --all`, `git gc --prune=now`, then count the blocked word across `git log --all --reflog -p` and confirm it is 0.
+- The `PII_BLOCKED_WORDS` repository secret must exist on GitHub before the first push, or `ci.yml` push runs and `deploy.yml` fail closed (by design).
+
+### Sign-off
+
+- Merge S-01 to main: **yes**.
+- First push to GitHub: **yes, if and only if** (i) the R2 cleanup above is done and recounted to 0, and (ii) the `PII_BLOCKED_WORDS` secret exists. Use a normal push (`git push origin main`), not `--mirror`.
+
+### Not verified
+
+A real GitHub push and Actions runs (the deploy criterion is still manual after G0.1, with the steps in the first entry). Anything outside the F1 to F3 fix: per the owner's scope, I did not re-review the rest of the diff, lint or tsconfig, or the other scan rules.
