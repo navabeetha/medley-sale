@@ -1,0 +1,3 @@
+# Exact findings in commits that predate the content scan. Each is a fictional fixture
+# (90000 001xx style, never a real number). Format: commit <sha7> <path> <rule>
+# Changing history changes these hashes; re-run `npm run pii` and update the line.

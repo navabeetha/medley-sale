@@ -168,6 +168,18 @@ export function scanPatchLog(text, blocked = []) {
   return findings;
 }
 
+// Commits written before the scan existed contain fictional fixtures (90000 001xx style)
+// that the rules rightly flag. tools/pii-history-allow.txt lists them exactly, one per line
+// as "commit <sha7> <path> <rule>"; nothing else is excused. Messages and identities are
+// never allowlisted.
+export function applyHistoryAllowlist(findings, text) {
+  const allowed = new Set(text.split("\n").map((l) => l.trim()).filter((l) => l && !l.startsWith("#")));
+  return findings.filter((f) => !(f.file.startsWith("commit ") && allowed.has(`${f.file} ${f.rule}`)));
+}
+
+const ALLOW_FILE = fileURLToPath(new URL("./pii-history-allow.txt", import.meta.url));
+const readAllowlist = () => (existsSync(ALLOW_FILE) ? readFileSync(ALLOW_FILE, "utf8") : "");
+
 // Scans every commit selected by revArgs (rev-list arguments): patch content of added
 // lines, plus added/renamed paths through scanPaths. The authoritative pushed-content check.
 export function scanRevisions(revArgs, blocked = [], cwd = process.cwd()) {
@@ -182,7 +194,7 @@ export function scanRevisions(revArgs, blocked = [], cwd = process.cwd()) {
     if (!sha) continue;
     findings.push(...scanPaths(paths).map((f) => ({ ...f, file: `commit ${sha.slice(0, 7)} ${f.file}` })));
   }
-  return findings;
+  return applyHistoryAllowlist(findings, readAllowlist());
 }
 
 export function readBlockedWords(env = process.env) {

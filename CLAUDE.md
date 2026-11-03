@@ -52,6 +52,7 @@ Also stop at the Section 11.5 conditions: anything contradicting a Section 5 dec
 - **E2E:** Playwright with a **mocked API**, on Chromium and WebKit, in Pixel and iPhone viewport profiles.
 - **Live checks:** against the staging (build copy) deployment only, for behaviour fakes can't prove (T-18, CORS, timings, on-edit triggers). Not in CI.
 - **Budgets (CI-enforced):** HTML, CSS and JS 50 KB compressed in total (excluding photos and API data). Thumbnail 12 KB or less. Full photo 120 KB or less. CLS under 0.1.
+- **Photo budget convention:** only files under `photos/` are budgeted, and thumbnails need "thumb" in the name (otherwise the 120 KB limit applies); the S-05 photo pipeline must follow this.
 - **Bug severity:** S1 privacy leak or lost reservation (stops release). S2 core journey broken. S3 workaround exists. S4 cosmetic. Every fix starts with a failing test.
 
 ## Gate command
