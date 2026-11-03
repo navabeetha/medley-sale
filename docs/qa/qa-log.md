@@ -92,3 +92,44 @@ R7. **S4, carried over:** old finding 8 (`deploy.yml` "Do not enable before Gate
 - A real push to GitHub, and Actions runs (deploy criterion, still manual after G0.1, steps in the entry above). That includes `fetch-depth: 0` actually giving full history on the runner, and GitHub's PR merge commit identity passing the scan.
 - `--no-verify` and fresh clones that never ran `npm install` both skip the hook. There is no server-side control. GitHub push protection or secret scanning was not evaluated.
 - The pre-push behaviour on Windows or with a GUI client. Pushing tags. Force-push when the remote sha is unknown locally (that code path was not exercised).
+
+---
+
+## 2026-11-03 (final re-review): S-01 fixes for R1 to R7
+
+**Branch:** `S-01-scaffold-ci-pages` at `3b14f98`, 26 commits on main plus branch. History was rewritten again before this review (fixture literal split, history allowlist emptied), so hashes in earlier entries no longer resolve.
+**Result:** Not signed off for merge or first push. The new pushed-content scan closes the exact R1 case, but merges get around it (finding F1, S1).
+
+### Verified
+
+- **Gate:** `npm ci && npm run check`, exit 0. Vitest 121/121 (10 files), Playwright 16/16 (Chromium and WebKit, Pixel and iPhone), size 0.7 KB of 50 KB, `pii-scan: 72 files, 0 finding(s)`. The WebKit teardown crash did not happen this run (it is logged as an S4 environment flake, macOS Screen Time KVO in Playwright WebKit).
+- **R1 probe through the real `.githooks/pre-push`** (scratch clone, scratch bare remote, synthetic blocked word through `PII_BLOCKED_WORDS`). Commit 1 adds a non-synthetic number and the word, commit 2 deletes them. Pushing that branch is REFUSED (phone and blocked-word findings for the add commit, exit 1). Pushing `<sha>:refs/heads/x` while a clean branch is checked out is REFUSED. Pushing only the add commit by SHA is REFUSED. A clean push of main plus the branch (26 commits) is accepted with 0 findings.
+- **History mode:** `node tools/pii-scan.mjs --require-blocked-words` gives 0 findings. `scanRevisions(main, branch, --full-history)` gives 0 findings. `tools/pii-history-allow.txt` has no active lines. The repo has no merge commits, so F1 hides nothing in it today.
+- **History counts, main plus branch (counts only, no values printed):** blocked word 0 in messages, identities, full patches (+ and -) and every commit tree. The scanner's rules over all patch lines (lockfile excluded) and all messages: 0. The only number-pattern hit is the fictional 90000-series negative-test line. No emails other than the GitHub user no-reply, `noreply@github.com` and `noreply@anthropic.com`. Every author and committer uses the user no-reply address.
+- **Tests first:** I ran Vitest on a `git archive` of each commit. Content-scan group: red at `dd02fc2` (12 new failures), green at `761d567`. False-positive group: red at `86febbd` (2 new failures), green at `9665574`. Workflow group: `60d017e` pins the existing settings (passing) and has 1 failing stale-comment check, which turns green at `fc8def2`. The 2 fail-closed CLI failures in every archive come from the archive having no `.git`. They also fail at the green commits, and they pass in the real gate.
+- **Edited pre-existing test** (`pii-scan-ids.test.ts`, the variable argument changed to a literal `'id'`): legitimate. The old assertion encoded the R3 false positive. The literal case is still asserted, and `pii-scan-fp.test.ts` now asserts that the variable and script-property forms pass.
+
+### Findings (worst first)
+
+F1. **S1: merge commits get past the pushed-content scan (pre-push and CI history mode).** Reproduced in a scratch repo, and the push went through the real hook with exit 0:
+  (a) A side branch adds a number and the word and then deletes them. It is merged with `--no-ff`, and the merge branch is pushed: `pre-push: 3 commit(s) ... 0 finding(s)`. The blob reached the remote. Cause: `scanRevisions` passes the pathspec `-- . :(exclude,glob)**/package-lock.json`. Any pathspec turns on git's history simplification, and a merge that is TREESAME to its first parent hides the whole side branch. Without the pathspec, or with `--full-history`, the same log shows both hits. `node tools/pii-scan.mjs` on that branch also reports 0.
+  (b) An evil merge: content added in the merge commit itself, then deleted in the next commit. Pushed with 0 findings. Cause: `git log -p` shows no diff for merge commits by default.
+  Fix: add `--full-history --diff-merges=first-parent` to both `git log` calls in `scanRevisions`, with add-then-delete-via-merge and evil-merge cases in `pii-scan-history-content.test.ts`. Developers merge `main` back into story branches, and GitHub creates merge commits, so this is the normal workflow, not an edge case.
+F2. **S3: `scanPatchLog` attributes added lines to the wrong file.** After a hunk, the next `diff --git` line is not treated as a file boundary (the `!inHunk` guard), so `flush()` does not run. Added lines from file A collect under the next file's name. Reproduced: a number in `test/a-first.txt` is reported as `test/b-second.txt`. Nothing is lost today, because the lockfile is excluded by pathspec. **But if F1 is fixed by dropping the pathspec and relying on `SKIP_CONTENT`, the content of any file that sorts just before `package-lock.json` in the same commit would be skipped silently.** The wrong name can also make a history allowlist entry excuse the wrong file. Fix: treat `diff --git` as a boundary whatever the hunk state, and add a two-file test.
+F3. **S4: the CLI history mode fails open on git errors.** `try { ... scanRevisions(["HEAD"]) } catch { /* no commits */ }` swallows any failure, for example maxBuffer or a shallow clone. Then the CI history scan is skipped with exit 0. The pre-push path fails closed (it throws). Suggest catching only "no commits".
+F4. **S4: a nested `**/package-lock.json` is excluded from history content.** The working-tree scan skips only the root lockfile.
+F5. **S4: binary file content is not scanned** (in history or the working tree), for example screenshots or PDFs. Path rules cover the sheet-export extensions only. Screenshots need a manual look (hard rule 1 includes screenshots).
+Noted by the implementer and not re-probed: EISDIR crash on untracked symlinked directories; false positive on a 16+ character string assigned to `token`.
+
+### Status of R1 to R7
+
+R1: fixed for linear history (probe refused). Reopened as F1 for merges. R2: **open**, `refs/original/` still exists, and 77 commits reachable through `--all --reflog` hold the blocked word 120 times (counted). Waits for the owner's consent to delete. R3: fixed (literal-only, tested). R4: camelCase part fixed; the `token` false positive remains (S4). R5: fixed (`workflows.test.ts`). R6: fixed in effect (the pushed range is scanned by content; the working-tree scan stays as an extra). R7: fixed (deploy comment, photo convention in CLAUDE.md).
+
+### Sign-off
+
+- Merge to main: **no**, until F1 is fixed with a failing test first (F2 at the same time is advised). After that, a re-check of the merge probes is enough.
+- First push: **no**, until F1 is fixed, plus R2 cleanup (delete `refs/original/*`, expire reflogs, `gc --prune=now`, recount 0 across `--all --reflog`) and the `PII_BLOCKED_WORDS` repository secret.
+
+### Not verified
+
+A real push to GitHub and Actions runs (the deploy criterion, manual after G0.1, steps in the first entry). Tag pushes. Force-push over an unknown remote sha. Windows or GUI clients. `--no-verify` and clones that never ran `npm install` skip the hook entirely. There is no server-side control, and GitHub push protection was not evaluated. ESLint and tsconfig strictness were not reviewed again.
