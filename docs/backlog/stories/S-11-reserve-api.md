@@ -29,6 +29,11 @@
 
 Nothing, unless redeploying the staging web app needs her authorisation (the PM walks her through it if so).
 
+## Notes from S-02 (D-026)
+
+- Skip items where `recalculate` reports `unavailable` (quantity 0 or invalid), the same as sold-out.
+- Pass `previousRole` from a recalculation of the claims before the write. Add an API-level test that a waiter promoted by a write gets `Promoted at` (and so a `To do` row); passing `null` for everyone would silently stamp nobody.
+
 ## Out of scope
 
 Booking read and back-out calls (S-12, S-14), and the email (S-16).

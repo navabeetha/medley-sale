@@ -31,6 +31,9 @@ New decisions are recorded here, one file each: `D-016-<slug>.md`, `D-017-<slug>
 | [D-020](D-020-measurements-recorded-here.md) | S-04 timings and other measurements are recorded as new decision files | Proposed |
 | [D-021](D-021-story-types-and-ready.md) | Pod types for S-17 and S-18, and applying Ready strictly | Proposed |
 | [D-022](D-022-size-budget-gzip.md) | The 50 KB budget is measured with gzip | Proposed |
-| [D-023](D-023-commit-email-privacy.md) | Commits use a GitHub no-reply email | Proposed, **needs the seller at G0** |
+| [D-023](D-023-commit-email-privacy.md) | Commits use a GitHub no-reply email | Accepted by default; the seller may override |
+| [D-024](D-024-owner-name-out-of-public-repo.md) | Owner's name kept out of the public repo | Accepted (the seller) |
+| [D-025](D-025-push-barrier-scope.md) | Push barrier: one narrow fix, leftovers to S-17 | Accepted (the seller) |
+| [D-026](D-026-queue-promotion-rules.md) | Queue promotion rule, role source, unavailable items | Proposed |
 
 **Next free ID: D-027.** Update this line and the index whenever you add a decision.

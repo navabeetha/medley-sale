@@ -18,5 +18,6 @@
 ## 3. Quantity 0 and invalid quantities
 
 - `soldOut` is true when at least one unit is sold and none are left: shown as "Sold" (6.2).
-- Quantity 0 means "not for sale": the engine reports `unavailable: true`, the item is hidden from the list like a sold-out item, and a direct link says it isn't available. No holders, no waiting list.
+- Quantity 0 means "not for sale": the engine reports `unavailable: true`, the item is hidden from the list like a sold-out item, and a direct link says it isn't available. Nobody holds it. Existing claims are kept in line as waiting, so restoring the quantity brings the line back in order. **The API (S-11) must refuse new reservations on an unavailable item** (skip it, as for sold-out); the engine does not block them.
+- **Seller note for G1:** a temporarily mistyped Quantity demotes the holders; fixing it promotes them again, with new `To do` rows. Line order is never lost.
 - A quantity that isn't a whole number of 0 or more (blank is already set to 1 by S-03) is treated as unavailable, and `canMarkSold` refuses with a plain reason. Nobody gets a hold on bad data.
