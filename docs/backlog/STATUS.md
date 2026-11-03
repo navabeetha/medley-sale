@@ -3,14 +3,14 @@
 *Maintained by the PM and updated after every story. Last updated: 2026-11-03 (S-02 done).*
 
 **Scope:** MVP only (brief Section 8), 43 points in 4 slices, worked in order.
-**Now:** S-01 and S-02 Done. First push made 2026-11-03; CI and Pages deploy green, site live with placeholder page. **Next:** G0.2 (build copy, attached script, `clasp login`) so S-03 can start. Every remaining Slice 1 story depends on S-03.
+**Now:** S-01 and S-02 Done. First push made 2026-11-03; CI and Pages deploy green, site live with placeholder page. **Next:** S-03 (sheet schema, migration and `scrubStaging()`), then G0.3: the seller checks the scrub by eye. Every remaining Slice 1 story depends on S-03.
 
 ## Gates
 
 | Gate | Stage | What | Status |
 |---|---|---|---|
 | G0 | G0.1 | Public GitHub repo, Pages from Actions, commit identity | Done 2026-11-03: secret added, backup cleaned (0 blocked-word hits), first deploy green |
-| G0 | G0.2 | Build copy, attached script, `clasp login` | Not started |
+| G0 | G0.2 | Build copy, attached script, `clasp login` | Done 2026-11-03 |
 | G0 | G0.3 | Scrub run and checked by eye | Not started |
 | G1 | | Staging review on phone, end of Slice 3 | Not started |
 | G2 | | Cutover (S-18) | Not started |
@@ -19,14 +19,14 @@ G0 is staged per [D-018](../decisions/D-018-g0-in-stages.md). Steps: [docs/runbo
 
 ## Waiting on the seller
 
-1. **G0.2:** build copy, attached script, `clasp login` (walkthrough next).
+1. **G0.3** (after S-03's scrub runs): check the build copy by eye.
 2. Review the proposed decisions D-016 to D-023 when convenient. They stand as proposed meanwhile.
 
 ## Board
 
 | Backlog | Ready | In progress | In QA | Done |
 |---|---|---|---|---|
-| S-04 to S-18 | S-03 (blocked by G0.2) | none | none | S-01, S-02 |
+| S-04 to S-18 | none | S-03 | none | S-01, S-02 |
 
 ## Slices
 
@@ -44,7 +44,7 @@ G0 is staged per [D-018](../decisions/D-018-g0-in-stages.md). Steps: [docs/runbo
 |---|---|---|---|---|---|---|
 | [S-01](stories/S-01-scaffold-ci-pages.md) | Scaffold, CI and Pages deploy | 2 | 1 | none | Done (QA signed off; deploy verified 2026-11-03) | G0.1 done |
 | [S-02](stories/S-02-queue-engine.md) | Queue engine with quantity | 5 | 1 | S-01 | Done (QA signed off) | |
-| [S-03](stories/S-03-sheet-schema-migration.md) | Sheet schema and migration | 3 | 1 | S-01 | Ready, blocked by G0.2 | G0.2, G0.3 |
+| [S-03](stories/S-03-sheet-schema-migration.md) | Sheet schema and migration | 3 | 1 | S-01 | In progress | G0.3 after scrub |
 | [S-04](stories/S-04-catalogue-api.md) | Catalogue API | 2 | 1 | S-02, S-03 | Backlog | D-001 go or no-go |
 | [S-05](stories/S-05-photo-pipeline.md) | Photo pipeline | 2 | 1 | S-03 | Backlog | Export after G0.3 |
 | [S-06](stories/S-06-catalogue-screen.md) | Catalogue screen | 3 | 1 | S-04 | Backlog | |

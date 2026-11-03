@@ -27,14 +27,16 @@ Exit: the repo exists and is public, Pages source is Actions, and `main` holds t
 
 | # | Who | Step | Done |
 |---|---|---|---|
-| 1 | The seller | Make a **copy** of the sale sheet (making a copy doesn't change the real sheet). Include **`BUILD COPY`** in its title, because the scrub refuses to run otherwise | ☐ |
-| 2 | The seller | Make sure the build copy is **not** shared publicly or with the group | ☐ |
-| 3 | The seller | From the build copy, open Extensions, then Apps Script, to attach a script project | ☐ |
-| 4 | The seller | Turn on the Apps Script API in her Apps Script user settings (needed for clasp to push code) | ☐ |
-| 5 | The seller | Run `clasp login` herself in Terminal and complete the Google sign-in in her browser. Credentials stay in her home folder, never in the repo or chat | ☐ |
-| 6 | The seller + PM | Give the PM the build copy's script ID **only when asked**. It goes in `.clasp.json`, which is gitignored. Never commit it | ☐ |
+| 1 | The seller | Make a **copy** of the sale sheet (making a copy doesn't change the real sheet). Include **`BUILD COPY`** in its title, because the scrub refuses to run otherwise | ☑ 2026-11-03 |
+| 2 | The seller | Make sure the build copy is **not** shared publicly or with the group | ☑ 2026-11-03 |
+| 3 | The seller | From the build copy, open Extensions, then Apps Script, to attach a script project | ☑ 2026-11-03 |
+| 4 | The seller | Turn on the Apps Script API in her Apps Script user settings (needed for clasp to push code) | ☑ 2026-11-03 |
+| 5 | The seller | Run `clasp login` herself in Terminal and complete the Google sign-in in her browser. Credentials stay in her home folder, never in the repo or chat | ☑ 2026-11-03 |
+| 6 | The seller + PM | Give the PM the build copy's script ID **only when asked**. It goes in `.clasp.json`, which is gitignored. Never commit it | ☑ 2026-11-03 |
 
 Exit: an agent can push code to the build copy's script. Nobody has read the build copy's data yet.
+
+**Met 2026-11-03.** Existing build copy reused (title contains BUILD COPY; Share checked: owner only, Restricted). clasp (package `@google/clasp`, version 3.4.1) run via npx (not yet a dev dependency; S-03 decides). `.clasp.json` (gitignored) has `rootDir: dist/appscript`; an empty-project pull from a scratch folder confirmed access.
 
 ### G0.3: Scrub check. Blocks all other use of the build copy
 
