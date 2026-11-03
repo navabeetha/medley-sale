@@ -1,0 +1,31 @@
+{
+  "name": "medley-sale",
+  "version": "0.0.0",
+  "private": true,
+  "description": "A44 Medley Garage Sale: static mobile-first reservation site",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "node tools/build.mjs",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "test:unit": "vitest run",
+    "test:e2e": "playwright test",
+    "test": "npm run test:unit && npm run test:e2e",
+    "size": "npm run build && node tools/size-budget.mjs dist",
+    "pii": "node tools/pii-scan.mjs",
+    "check": "npm run typecheck && npm run lint && npm test && npm run size && npm run pii"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.64.1",
+    "@types/node": "^26.6.6",
+    "esbuild": "^0.28.2",
+    "eslint": "^10.14.0",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.72.1",
+    "vitest": "^5.1.0"
+  }
+}
