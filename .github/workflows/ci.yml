@@ -19,3 +19,5 @@ jobs:
       - run: npm ci
       - run: npx playwright install --with-deps chromium webkit
       - run: npm run check
+        env:
+          PII_BLOCKED_WORDS: ${{ secrets.PII_BLOCKED_WORDS }}

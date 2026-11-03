@@ -16,6 +16,16 @@ const EMAIL = /[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+/g;
 const PHONE = /(?<![\w.+-])(\+?)(\(?\d[\d\s\-()]{7,18}\d)(?![\w-])/g;
 const SHEET_URL = /docs\.google\.com\/spreadsheets/i;
 const SHEET_ID_NEAR = /spreadsheets[^\n]{0,80}?(?<![A-Za-z0-9_-])[A-Za-z0-9_-]{44}(?![A-Za-z0-9_-])/i;
+// Personal words that must never be committed (e.g. the owner's first name). They are
+// never stored in this public repo: locally they come from private/blocked-words.txt
+// (gitignored, one per line, # comments), in CI from the PII_BLOCKED_WORDS secret.
+export function loadBlockedWords(envValue, fileText) {
+  const words = [...(envValue ?? "").split(","), ...(fileText ?? "").split("\n")]
+    .map((w) => w.trim().toLowerCase())
+    .filter((w) => w && !w.startsWith("#"));
+  return [...new Set(words)];
+}
+
 const SECRETS = [
   /\bgh[pousr]_[A-Za-z0-9]{30,}/,
   /\bgithub_pat_[A-Za-z0-9_]{40,}/,
@@ -36,7 +46,7 @@ function isPhone(sep, body) {
   return /^91[6-9]\d{9}$/.test(digits) || /^0[6-9]\d{9}$/.test(digits);
 }
 
-export function scanText(file, text) {
+export function scanText(file, text, blocked = []) {
   const findings = [];
   const add = (line, rule) => findings.push({ file, line, rule });
   text.split("\n").forEach((content, i) => {
@@ -47,6 +57,11 @@ export function scanText(file, text) {
     }
     if (SHEET_URL.test(content) || SHEET_ID_NEAR.test(content)) add(line, "sheet");
     if (SECRETS.some((re) => re.test(content))) add(line, "secret");
+    if (blocked.length) {
+      for (const w of content.matchAll(/\p{L}+/gu)) {
+        if (blocked.includes(w[0].toLowerCase())) { add(line, "blocked-word"); break; }
+      }
+    }
   });
   return findings;
 }
@@ -66,12 +81,18 @@ const git = (...args) =>
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const tracked = git("ls-files", "-z");
   const untracked = git("ls-files", "-z", "--others", "--exclude-standard");
+  const listFile = "private/blocked-words.txt";
+  const blocked = loadBlockedWords(
+    process.env.PII_BLOCKED_WORDS,
+    existsSync(listFile) ? readFileSync(listFile, "utf8") : undefined,
+  );
+  if (!blocked.length) console.warn("pii-scan: no blocked words configured (private/blocked-words.txt or PII_BLOCKED_WORDS)");
   const findings = scanPaths(tracked);
   for (const file of [...tracked, ...untracked]) {
     if (SKIP_CONTENT.has(file) || !existsSync(file)) continue;
     const buf = readFileSync(file);
     if (buf.subarray(0, 8000).includes(0)) continue; // binary
-    findings.push(...scanText(file, buf.toString("utf8")));
+    findings.push(...scanText(file, buf.toString("utf8"), blocked));
   }
   for (const f of findings) console.error(`FAIL ${f.file}${f.line ? `:${f.line}` : ""}  ${f.rule}`);
   console.log(`pii-scan: ${tracked.length + untracked.length} files, ${findings.length} finding(s)`);
