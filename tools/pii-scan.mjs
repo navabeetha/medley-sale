@@ -130,6 +130,56 @@ export function scanCommits(commits, blocked = []) {
   });
 }
 
+// File content of commits is public too, including lines a later commit deleted. Parses
+// `git log -p -U0 --format=%x1e%H` output: for each commit and file, the added ("+") lines
+// go through scanText. Findings name commit and file, never the matched value.
+export function scanPatchLog(text, blocked = []) {
+  const findings = [];
+  for (const rec of text.split("\x1e")) {
+    const lines = rec.split("\n");
+    const sha = lines.shift()?.trim();
+    if (!sha) continue;
+    let file = null;
+    let inHunk = false;
+    let added = [];
+    const flush = () => {
+      if (file && !SKIP_CONTENT.has(file) && added.length) {
+        findings.push(...scanText(`commit ${sha.slice(0, 7)} ${file}`, added.join("\n"), blocked).map((f) => ({ ...f, line: 0 })));
+      }
+      added = [];
+    };
+    for (const l of lines) {
+      if (!inHunk && l.startsWith("diff --git ")) { flush(); file = null; continue; }
+      if (inHunk && (l.startsWith("+") || l.startsWith("-") || l.startsWith(" ") || l.startsWith("\\"))) {
+        if (l.startsWith("+")) added.push(l.slice(1));
+        continue;
+      }
+      if (l.startsWith("@@")) { inHunk = true; continue; }
+      inHunk = false;
+      if (l.startsWith("+++ ")) file = l.slice(4).replace(/\t.*$/, "").replace(/^b\//, "");
+    }
+    flush();
+  }
+  return findings;
+}
+
+// Scans every commit selected by revArgs (rev-list arguments): patch content of added
+// lines, plus added/renamed paths through scanPaths. The authoritative pushed-content check.
+export function scanRevisions(revArgs, blocked = [], cwd = process.cwd()) {
+  const run = (extra, tail = []) =>
+    execFileSync("git", ["-c", "core.quotepath=false", "log", "--no-color", "--no-ext-diff", "--no-textconv", ...extra, ...revArgs, ...tail],
+      { cwd, encoding: "utf8", maxBuffer: 256 * 1024 * 1024, stdio: ["ignore", "pipe", "ignore"] });
+  const patches = run(["-p", "-U0", "--format=%x1e%H"], ["--", ".", ":(exclude,glob)**/package-lock.json"]);
+  const names = run(["--name-only", "--diff-filter=AR", "--format=%x1e%H"]);
+  const findings = scanPatchLog(patches, blocked);
+  for (const rec of names.split("\x1e")) {
+    const [sha, ...paths] = rec.split("\n").map((x) => x.trim()).filter(Boolean);
+    if (!sha) continue;
+    findings.push(...scanPaths(paths).map((f) => ({ ...f, file: `commit ${sha.slice(0, 7)} ${f.file}` })));
+  }
+  return findings;
+}
+
 export function readBlockedWords(env = process.env) {
   const listFile = env.PII_BLOCKED_WORDS_FILE ?? "private/blocked-words.txt";
   return loadBlockedWords(env.PII_BLOCKED_WORDS, existsSync(listFile) ? readFileSync(listFile, "utf8") : undefined);
@@ -155,6 +205,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   try {
     const log = execFileSync("git", ["log", `--format=${GIT_LOG_FORMAT}`, "HEAD"], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024, stdio: ["ignore", "pipe", "ignore"] });
     findings.push(...scanCommits(parseLog(log), blocked));
+    findings.push(...scanRevisions(["HEAD"], blocked));
   } catch { /* no commits */ }
   for (const f of findings) console.error(`FAIL ${f.file}${f.line ? `:${f.line}` : ""}  ${f.rule}`);
   console.log(`pii-scan: ${tracked.length + untracked.length} files, ${findings.length} finding(s)`);

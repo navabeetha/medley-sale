@@ -69,7 +69,7 @@ describe("history content against a throwaway repo", () => {
   afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
   it("the working tree and every message are clean, yet the added-then-deleted number is found in history", () => {
-    const f = scanRevisions([`${first}..${deleted}`], []);
+    const f = scanRevisions([`${first}..${deleted}`], [], dir);
     expect(f.map((x: { rule: string }) => x.rule)).toEqual(["phone"]);
     expect(f[0].file).toContain(added.slice(0, 7));
     expect(f[0].file).toContain("fixture.txt");
@@ -101,7 +101,7 @@ describe("history content against a throwaway repo", () => {
     const sha = commitFile("export.csv", "a,b\n", "S-01: add export");
     git("rm", "-q", "export.csv");
     git("commit", "-q", "-m", "S-01: drop export");
-    const f = scanRevisions([`${deleted}..HEAD`], []);
+    const f = scanRevisions([`${deleted}..HEAD`], [], dir);
     expect(f.map((x: { rule: string }) => x.rule)).toEqual(["tracked-export"]);
     expect(f[0].file).toContain(sha.slice(0, 7));
   });

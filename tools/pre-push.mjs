@@ -6,7 +6,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import {
-  GIT_LOG_FORMAT, parseLog, scanCommits, readBlockedWords, blockedWordsProblem, blockedWordsRequired,
+  GIT_LOG_FORMAT, parseLog, scanCommits, readBlockedWords, blockedWordsProblem, blockedWordsRequired, scanRevisions,
 } from "./pii-scan.mjs";
 
 const ZERO = /^0+$/;
@@ -36,17 +36,22 @@ export function revListArgs(l) {
   return [`${l.remoteSha}..${l.localSha}`];
 }
 
-function commitsFor(l) {
+// Runs fn with the rev-list args for this push line; null when nothing is sent.
+function withRange(l, fn) {
   const args = revListArgs(l);
-  if (!args) return [];
-  const run = (a) =>
-    execFileSync("git", ["log", `--format=${GIT_LOG_FORMAT}`, ...a], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024, stdio: ["ignore", "pipe", "ignore"] });
+  if (!args) return null;
   try {
-    return parseLog(run(args));
+    return fn(args);
   } catch {
     // Remote sha unknown locally (force-push over someone else's work): treat as new.
-    return parseLog(run([l.localSha, "--not", "--remotes"]));
+    return fn([l.localSha, "--not", "--remotes"]);
   }
+}
+
+function commitsFor(l) {
+  const log = (a) =>
+    execFileSync("git", ["log", `--format=${GIT_LOG_FORMAT}`, ...a], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024, stdio: ["ignore", "pipe", "ignore"] });
+  return withRange(l, (a) => parseLog(log(a))) ?? [];
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
@@ -58,7 +63,12 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   for (const r of refused) console.error(`REFUSED ${r.ref}  ${r.reason}`);
   const seen = new Set();
   const commits = lines.flatMap(commitsFor).filter((c) => !seen.has(c.sha) && seen.add(c.sha));
-  const findings = scanCommits(commits, blocked);
+  // Content of every pushed commit, including files a later commit deleted. This is the
+  // authoritative check; the hook's working-tree scan is an extra.
+  const findings = [
+    ...scanCommits(commits, blocked),
+    ...lines.flatMap((l) => withRange(l, (a) => scanRevisions(a, blocked)) ?? []),
+  ];
   for (const f of findings) console.error(`FAIL ${f.file}${f.line ? `:${f.line}` : ""}  ${f.rule}`);
   console.log(`pre-push: ${commits.length} commit(s), ${refused.length} refused ref(s), ${findings.length} finding(s)`);
   process.exit(refused.length || findings.length || problem?.fail ? 1 : 0);
