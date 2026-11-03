@@ -10,3 +10,6 @@ export interface CommitInfo {
 export const GIT_LOG_FORMAT: string;
 export function parseLog(text: string): CommitInfo[];
 export function scanCommits(commits: CommitInfo[], blocked?: string[]): Finding[];
+export function scanPatchLog(text: string, blocked?: string[]): Finding[];
+export function scanRevisions(revArgs: string[], blocked?: string[], cwd?: string): Finding[];
+export function applyHistoryAllowlist(findings: Finding[], text: string): Finding[];

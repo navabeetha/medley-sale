@@ -71,8 +71,8 @@ describe("history content against a throwaway repo", () => {
   it("the working tree and every message are clean, yet the added-then-deleted number is found in history", () => {
     const f = scanRevisions([`${first}..${deleted}`], [], dir);
     expect(f.map((x: { rule: string }) => x.rule)).toEqual(["phone"]);
-    expect(f[0].file).toContain(added.slice(0, 7));
-    expect(f[0].file).toContain("fixture.txt");
+    expect(f[0]!.file).toContain(added.slice(0, 7));
+    expect(f[0]!.file).toContain("fixture.txt");
     expect(JSON.stringify(f)).not.toContain("00133");
   });
 
@@ -103,7 +103,7 @@ describe("history content against a throwaway repo", () => {
     git("commit", "-q", "-m", "S-01: drop export");
     const f = scanRevisions([`${deleted}..HEAD`], [], dir);
     expect(f.map((x: { rule: string }) => x.rule)).toEqual(["tracked-export"]);
-    expect(f[0].file).toContain(sha.slice(0, 7));
+    expect(f[0]!.file).toContain(sha.slice(0, 7));
   });
 
   it("pii-scan history mode (CLI) finds the deleted number in any commit reachable from HEAD", () => {
