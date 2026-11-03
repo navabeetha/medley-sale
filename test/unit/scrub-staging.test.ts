@@ -146,7 +146,7 @@ describe("scrubStaging result", () => {
     // Hand count from the fixture: Person values 3 (Tech, one is the formula
     // name) + 1 (Gym) + 2 (Books) = 6. Cells holding a number: 3 README + 2
     // headers = 5. Comments: 2 (Tech) + 1 (Books) = 3.
-    expect(res).toEqual({ peopleReplaced: 6, numbersRemoved: 5, commentsRemoved: 3 });
+    expect(res).toMatchObject({ peopleReplaced: 6, numbersRemoved: 5, commentsRemoved: 3 });
   });
 
   it("contains none of the original names or numbers in the result or the logs", () => {

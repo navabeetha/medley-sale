@@ -58,6 +58,13 @@ class SheetTab implements Tab {
     );
     return out;
   }
+  getLinks(): { row: number; col: number; url: string }[] {
+    throw new Error("not implemented");
+  }
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  setLink(_row: number, _col: number, _url: string | null): void {
+    throw new Error("not implemented");
+  }
 }
 
 class ActiveSpreadsheet implements Spreadsheet {

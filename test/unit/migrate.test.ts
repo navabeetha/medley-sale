@@ -22,7 +22,7 @@ const BOOKING_HEADERS = ["Booking ID", "Token", "Name", "Number", "Created", "Id
 afterEach(() => vi.restoreAllMocks());
 
 function run(ss: FakeSpreadsheet, seed = 0, log?: (l: string) => void): MigrateResult {
-  return migrate(ss, { randomBytes: counterRandom(seed).fn, now: () => NOW, log });
+  return migrate(ss, { randomBytes: counterRandom(seed).fn, now: () => NOW, log, allowUnscrubbed: true });
 }
 type Rec = Record<string, CellValue>;
 function records(tab: Tab): Rec[] {

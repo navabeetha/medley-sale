@@ -9,12 +9,24 @@ export interface ScrubOptions {
   log?: (line: string) => void;
 }
 
+export interface TabScrubCounts {
+  peopleReplaced: number;
+  numbersRemoved: number;
+  commentsRemoved: number;
+}
+
 /** Counts only. Never original values. */
 export interface ScrubResult {
   peopleReplaced: number;
   /** Cells (README and header rows) from which a phone number was removed. */
   numbersRemoved: number;
   commentsRemoved: number;
+  /** Per-tab counts, keyed by tab name (names only, never values). */
+  tabs: Record<string, TabScrubCounts>;
+  /** Tabs that have data but no Person header: their names were NOT replaced. */
+  tabsWithoutPerson: string[];
+  /** Whether a tab named exactly README exists. */
+  readmeFound: boolean;
 }
 
 export interface MigrateOptions {
@@ -23,6 +35,12 @@ export interface MigrateOptions {
   /** ISO timestamp used for `Created`. */
   now: () => string;
   log?: (line: string) => void;
+  /**
+   * Skips ONLY the "has the scrub run" check (every Person matches the scrub's
+   * format). The BUILD COPY title check can never be skipped. For tests that
+   * need unscrubbed fixtures.
+   */
+  allowUnscrubbed?: boolean;
 }
 
 /** Counts of changes made by this run. All zero on a rerun. */
@@ -33,6 +51,12 @@ export interface MigrateResult {
   quantitiesSet: number;
   bookingsCreated: number;
   claimsCreated: number;
+  /** Reserved or Sold rows with a blank Person: no claim is made. */
+  reservedOrSoldWithoutPerson: number;
+  /** Available rows that have a Person: ignored, no claim. */
+  availableWithPerson: number;
+  /** Sold rows whose Price is not a number: the claim gets a blank Sold price. */
+  soldWithTextPrice: number;
 }
 
 // ---- Names that depend on the real sheet: extend here once headers are known.
@@ -129,7 +153,10 @@ export function scrubStaging(ss: Spreadsheet, opts: ScrubOptions = {}): ScrubRes
     commentsRemoved += tab.clearComments();
   }
 
-  const result = { peopleReplaced, numbersRemoved, commentsRemoved };
+  const result: ScrubResult = {
+    peopleReplaced, numbersRemoved, commentsRemoved,
+    tabs: {}, tabsWithoutPerson: [], readmeFound: false, // stub (S-03 fix round)
+  };
   opts.log?.(`scrubStaging: ${peopleReplaced} people replaced, ${numbersRemoved} cells cleared of numbers, ${commentsRemoved} comments removed`);
   return result;
 }
@@ -192,6 +219,7 @@ export function migrate(ss: Spreadsheet, opts: MigrateOptions): MigrateResult {
   const result: MigrateResult = {
     columnsAdded: 0, tabsCreated: 0, idsAssigned: 0,
     quantitiesSet: 0, bookingsCreated: 0, claimsCreated: 0,
+    reservedOrSoldWithoutPerson: 0, availableWithPerson: 0, soldWithTextPrice: 0,
   };
 
   // 1. Check every row before writing anything.

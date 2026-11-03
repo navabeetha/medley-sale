@@ -30,7 +30,7 @@ const bookRow = (
 
 export const DEC_2 = new Date(Date.UTC(2026, 11, 2));
 
-/** Every status, a blank price, a real date cell, a hostile name, a quantity-3 row. */
+/** Every status, a blank price, a real date cell, a hostile name (no quantity column yet). */
 export function buildStaging(title = "A44 Garage Sale BUILD COPY"): FakeSpreadsheet {
   const ss = new FakeSpreadsheet(title);
   ss.withTab("README", [

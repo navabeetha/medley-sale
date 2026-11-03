@@ -20,6 +20,10 @@ export interface Tab {
   /** Write a formula (the string starts with "="). */
   setFormula(row: number, col: number, formula: string): void;
   getFormulas(): { row: number; col: number; formula: string }[];
+  /** Hyperlink URLs attached to cells (rich-text links), one entry per linked cell. */
+  getLinks(): { row: number; col: number; url: string }[];
+  /** Attach a link to a cell's text, or remove it with null. */
+  setLink(row: number, col: number, url: string | null): void;
 }
 
 export interface Spreadsheet {

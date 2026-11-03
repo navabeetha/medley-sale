@@ -6,6 +6,7 @@ export class FakeTab implements Tab {
   comments: { row: number; col: number }[] = [];
   validations = new Map<number, string[]>();
   formulas: { row: number; col: number; formula: string }[] = [];
+  links: { row: number; col: number; url: string }[] = [];
   /** Every string written through setCell/appendRow, for the 6.3 guard checks. */
   writtenStrings: string[] = [];
 
@@ -20,6 +21,9 @@ export class FakeTab implements Tab {
     const r = this.grid[row - 1]!;
     while (r.length < col) r.push(null);
     r[col - 1] = value;
+    // Like the real thing, writing a plain value replaces any formula or link.
+    this.formulas = this.formulas.filter((f) => !(f.row === row && f.col === col));
+    this.links = this.links.filter((l) => !(l.row === row && l.col === col));
     if (typeof value === "string") this.writtenStrings.push(value);
   }
   appendRow(values: CellValue[]): void {
@@ -46,6 +50,13 @@ export class FakeTab implements Tab {
   }
   getFormulas() {
     return this.formulas.map((f) => ({ ...f }));
+  }
+  setLink(row: number, col: number, url: string | null): void {
+    this.links = this.links.filter((l) => !(l.row === row && l.col === col));
+    if (url !== null) this.links.push({ row, col, url });
+  }
+  getLinks() {
+    return this.links.map((l) => ({ ...l }));
   }
 }
 
@@ -85,6 +96,7 @@ export class FakeSpreadsheet implements Spreadsheet {
         comments: t.comments,
         validations: [...t.validations.entries()],
         formulas: t.formulas,
+        links: t.links,
       })),
     });
   }
