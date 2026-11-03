@@ -29,6 +29,7 @@ jobs:
       - run: npm run check
         env:
           PII_BLOCKED_WORDS: ${{ secrets.PII_BLOCKED_WORDS }}
+          REQUIRE_BLOCKED_WORDS: "1"
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

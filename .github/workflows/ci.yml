@@ -21,3 +21,4 @@ jobs:
       - run: npm run check
         env:
           PII_BLOCKED_WORDS: ${{ secrets.PII_BLOCKED_WORDS }}
+          REQUIRE_BLOCKED_WORDS: ${{ github.event_name == 'push' && '1' || '' }}

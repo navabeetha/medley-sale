@@ -26,6 +26,19 @@ export function loadBlockedWords(envValue, fileText) {
   return [...new Set(words)];
 }
 
+// Fail closed: on a push to the owner repo (and in the pre-push hook) an empty list is an
+// error, not a warning, so a missing secret can never silently disable the guard.
+export function blockedWordsRequired(argv, env) {
+  return argv.includes("--require-blocked-words") || env.REQUIRE_BLOCKED_WORDS === "1";
+}
+
+export function blockedWordsProblem(blocked, required) {
+  if (blocked.length) return null;
+  return required
+    ? { fail: true, message: "pii-scan: blocked words are required but none are configured (private/blocked-words.txt or PII_BLOCKED_WORDS)" }
+    : { fail: false, message: "pii-scan: no blocked words configured (private/blocked-words.txt or PII_BLOCKED_WORDS)" };
+}
+
 const SECRETS = [
   /\bgh[pousr]_[A-Za-z0-9]{30,}/,
   /\bgithub_pat_[A-Za-z0-9_]{40,}/,
@@ -81,12 +94,13 @@ const git = (...args) =>
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const tracked = git("ls-files", "-z");
   const untracked = git("ls-files", "-z", "--others", "--exclude-standard");
-  const listFile = "private/blocked-words.txt";
+  const listFile = process.env.PII_BLOCKED_WORDS_FILE ?? "private/blocked-words.txt";
   const blocked = loadBlockedWords(
     process.env.PII_BLOCKED_WORDS,
     existsSync(listFile) ? readFileSync(listFile, "utf8") : undefined,
   );
-  if (!blocked.length) console.warn("pii-scan: no blocked words configured (private/blocked-words.txt or PII_BLOCKED_WORDS)");
+  const problem = blockedWordsProblem(blocked, blockedWordsRequired(process.argv.slice(2), process.env));
+  if (problem) console[problem.fail ? "error" : "warn"](problem.message);
   const findings = scanPaths(tracked);
   for (const file of [...tracked, ...untracked]) {
     if (SKIP_CONTENT.has(file) || !existsSync(file)) continue;
@@ -96,5 +110,5 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   }
   for (const f of findings) console.error(`FAIL ${f.file}${f.line ? `:${f.line}` : ""}  ${f.rule}`);
   console.log(`pii-scan: ${tracked.length + untracked.length} files, ${findings.length} finding(s)`);
-  process.exit(findings.length ? 1 : 0);
+  process.exit(findings.length || problem?.fail ? 1 : 0);
 }
