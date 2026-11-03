@@ -1,9 +1,11 @@
 # Status board
 
-*Maintained by the PM and updated after every story. Last updated: 2026-11-03 (S-02 done).*
+*Maintained by the PM and updated after every story. Last updated: 2026-11-04 (paused for the day; S-03 code pushed to the build copy's script).*
 
 **Scope:** MVP only (brief Section 8), 43 points in 4 slices, worked in order.
-**Now:** S-01 and S-02 Done. First push made 2026-11-03; CI and Pages deploy green, site live with placeholder page. **Next:** S-03 (sheet schema, migration and `scrubStaging()`), then G0.3: the seller checks the scrub by eye. Every remaining Slice 1 story depends on S-03.
+**Now:** S-01 and S-02 Done; site live with placeholder page. S-03 code done on branch `S-03-sheet-schema-migration`: QA blocked once (B1-B4), fixed, re-checked and signed off with follow-ups R1-R6 (qa-log). Code pushed with `npm run push:gas` to the build copy's script on 2026-11-04. Nothing has run on the copy yet.
+
+**Resume here:** the seller runs `scrubStaging` from the Apps Script editor (G0.3 part 1: steps in the runbook and the QA re-check entry) and pastes the execution log (tab names and counts only). PM checks it: about 10 people, no WARNING lines. Then G0.3 part 2: the seller's by-eye check (8 steps in the QA re-check entry), deletes threaded comments, says "scrub checked". Then run `migrateSheet` plus the live checks, merge S-03, and move on to S-04 and S-05. Every remaining Slice 1 story depends on S-03.
 
 ## Gates
 
@@ -11,7 +13,7 @@
 |---|---|---|---|
 | G0 | G0.1 | Public GitHub repo, Pages from Actions, commit identity | Done 2026-11-03: secret added, backup cleaned (0 blocked-word hits), first deploy green |
 | G0 | G0.2 | Build copy, attached script, `clasp login` | Done 2026-11-03 |
-| G0 | G0.3 | Scrub run and checked by eye | Not started |
+| G0 | G0.3 | Scrub run and checked by eye | Code pushed; waiting for the seller to run `scrubStaging` |
 | G1 | | Staging review on phone, end of Slice 3 | Not started |
 | G2 | | Cutover (S-18) | Not started |
 
@@ -19,8 +21,9 @@ G0 is staged per [D-018](../decisions/D-018-g0-in-stages.md). Steps: [docs/runbo
 
 ## Waiting on the seller
 
-1. **G0.3** (after S-03's scrub runs): check the build copy by eye.
-2. Review the proposed decisions D-016 to D-023 when convenient. They stand as proposed meanwhile.
+1. **G0.3 part 1:** run `scrubStaging` in the Apps Script editor and paste the log.
+2. **G0.3 part 2:** check the build copy by eye and say "scrub checked".
+3. Review the proposed decisions D-016 to D-023 when convenient. They stand as proposed meanwhile.
 
 ## Board
 
