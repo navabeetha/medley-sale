@@ -14,8 +14,8 @@ export interface ClaimInput {
   itemId: string;
   state: ClaimState;
   promotedAt: string | null;
-  /** Role after the previous recalculation (null = new or not active). */
-  previousRole: "holder" | "waiting" | null;
+  /** Role before this change (null = created in this write). See D-026. */
+  previousRole: ClaimRole | null;
 }
 
 export interface ClaimResult {
@@ -33,6 +33,8 @@ export interface RecalcResult {
   freeUnits: number;
   waitingCount: number;
   soldOut: boolean;
+  /** Quantity is 0 or not a whole number: nobody can hold or queue (D-026). */
+  unavailable: boolean;
   claims: ClaimResult[];
   changes: { promoted: number[]; demoted: number[] };
 }
@@ -40,11 +42,14 @@ export interface RecalcResult {
 const soldCount = (item: ItemInput, claims: ClaimInput[]): number =>
   claims.filter((c) => c.itemId === item.id && c.state === "sold").length;
 
+const validQuantity = (q: unknown): q is number => Number.isInteger(q) && (q as number) >= 0;
+
 export function recalculate(item: ItemInput, claims: ClaimInput[], now: string): RecalcResult {
   const own = claims.filter((c) => c.itemId === item.id).sort((a, b) => a.claimId - b.claimId);
   const sold = soldCount(item, claims);
-  const unitsLeft = Math.max(0, item.quantity - sold);
-  const soldOut = sold > 0 && unitsLeft === 0;
+  const unavailable = !validQuantity(item.quantity) || item.quantity === 0;
+  const unitsLeft = unavailable ? 0 : Math.max(0, item.quantity - sold);
+  const soldOut = !unavailable && sold > 0 && unitsLeft === 0;
 
   const changes: RecalcResult["changes"] = { promoted: [], demoted: [] };
   let active = 0;
@@ -57,12 +62,10 @@ export function recalculate(item: ItemInput, claims: ClaimInput[], now: string):
 
     active += 1;
     if (active <= unitsLeft) {
-      if (c.previousRole === "waiting") {
-        changes.promoted.push(c.claimId);
-        return { ...base, role: "holder", promotedAt: now };
-      }
-      // A holder keeps its stamp; a claim that was never waiting is not stamped.
-      return { ...base, role: "holder", promotedAt: c.previousRole === "holder" ? c.promotedAt : null };
+      if (c.previousRole === "holder") return { ...base, role: "holder", promotedAt: c.promotedAt };
+      if (c.previousRole === null) return { ...base, role: "holder" };
+      changes.promoted.push(c.claimId);
+      return { ...base, role: "holder", promotedAt: now };
     }
 
     if (c.previousRole === "holder") changes.demoted.push(c.claimId);
@@ -75,6 +78,7 @@ export function recalculate(item: ItemInput, claims: ClaimInput[], now: string):
     freeUnits: Math.max(0, unitsLeft - active),
     waitingCount,
     soldOut,
+    unavailable,
     claims: results,
     changes,
   };
@@ -91,7 +95,10 @@ export function canMarkSold(
     return { ok: false, reason: `Only an active reservation can be marked sold (this one is ${target.state}).` };
   }
   const sold = soldCount(item, claims);
-  if (item.quantity <= 0) return { ok: false, reason: "This item has no units to sell. Set a quantity first." };
+  if (!validQuantity(item.quantity)) {
+    return { ok: false, reason: "This item's quantity isn't a whole number. Fix the Quantity cell first." };
+  }
+  if (item.quantity === 0) return { ok: false, reason: "This item has no units to sell. Set a quantity first." };
   if (sold >= item.quantity) {
     const units = `${item.quantity} unit${item.quantity === 1 ? " is" : "s are"}`;
     return { ok: false, reason: `All ${units} already sold. Undo another sale first.` };
