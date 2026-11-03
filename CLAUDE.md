@@ -59,3 +59,5 @@ Also stop at the Section 11.5 conditions: anything contradicting a Section 5 dec
 `npm ci && npm run check`
 
 `check` runs, in order: `tsc --noEmit`, `eslint .`, `npm test` (Vitest unit, then Playwright smoke on Chromium and WebKit in Pixel 7 and iPhone 14 profiles), `npm run size` (builds, then the gzip size budget, D-022) and `npm run pii` (personal-data and secrets scan of git-tracked files). First time on a machine: `npx playwright install chromium webkit`. CI and the Pages deploy run the same command.
+
+`npm install` (the `prepare` script) sets `core.hooksPath` to `.githooks`, whose **pre-push hook** runs `tools/pre-push.mjs` (refuses non-branch/tag refs and `refs/original/`; scans the commit messages and author/committer identities being pushed) and `node tools/pii-scan.mjs --require-blocked-words`. CI only runs after content is public, so this is the real barrier: never bypass it with `--no-verify`. `pii` also scans commit messages reachable from HEAD, and fails closed (`--require-blocked-words` or `REQUIRE_BLOCKED_WORDS=1`) on pushes and deploys.
