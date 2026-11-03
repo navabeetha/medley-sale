@@ -1,5 +1,8 @@
 {
   "timeZone": "Asia/Kolkata",
   "runtimeVersion": "V8",
-  "exceptionLogging": "STACKDRIVER"
+  "exceptionLogging": "STACKDRIVER",
+  "oauthScopes": [
+    "https://www.googleapis.com/auth/spreadsheets.currentonly"
+  ]
 }

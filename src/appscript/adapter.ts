@@ -19,11 +19,13 @@ class SheetTab implements Tab {
   appendRow(values: CellValue[]): void {
     this.sheet.appendRow(values);
   }
-  /** Notes only. Apps Script has no API for threaded comments (see scrubStaging docs). */
+  /** Whole tab, not just the data range. Notes only: Apps Script has no API for threaded comments. */
+  private fullRange(): GoogleAppsScript.Spreadsheet.Range {
+    return this.sheet.getRange(1, 1, this.sheet.getMaxRows(), this.sheet.getMaxColumns());
+  }
   getComments(): { row: number; col: number }[] {
     const out: { row: number; col: number }[] = [];
-    if (this.sheet.getLastRow() === 0) return out;
-    this.sheet.getDataRange().getNotes().forEach((r, i) =>
+    this.fullRange().getNotes().forEach((r, i) =>
       r.forEach((n, j) => {
         if (n) out.push({ row: i + 1, col: j + 1 });
       }),
@@ -32,7 +34,7 @@ class SheetTab implements Tab {
   }
   clearComments(): number {
     const n = this.getComments().length;
-    if (n > 0) this.sheet.getDataRange().clearNote();
+    if (n > 0) this.fullRange().clearNote();
     return n;
   }
   setDataValidation(col: number, allowed: string[]): void {
@@ -59,11 +61,24 @@ class SheetTab implements Tab {
     return out;
   }
   getLinks(): { row: number; col: number; url: string }[] {
-    throw new Error("not implemented");
+    const out: { row: number; col: number; url: string }[] = [];
+    if (this.sheet.getLastRow() === 0 || this.sheet.getLastColumn() === 0) return out;
+    this.sheet.getDataRange().getRichTextValues().forEach((r, i) =>
+      r.forEach((rt, j) => {
+        // Whole-cell link, or any link run inside the text.
+        if (!rt) return;
+        const urls = [rt.getLinkUrl(), ...rt.getRuns().map((run) => run.getLinkUrl())].filter((u): u is string => !!u);
+        if (urls.length > 0) out.push({ row: i + 1, col: j + 1, url: urls.join(" ") });
+      }),
+    );
+    return out;
   }
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  setLink(_row: number, _col: number, _url: string | null): void {
-    throw new Error("not implemented");
+  setLink(row: number, col: number, url: string | null): void {
+    const range = this.sheet.getRange(row, col);
+    const text = range.getDisplayValue();
+    const rich = SpreadsheetApp.newRichTextValue().setText(text);
+    if (url !== null) rich.setLinkUrl(url);
+    range.setRichTextValue(rich.build());
   }
 }
 
