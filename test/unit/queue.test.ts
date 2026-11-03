@@ -5,16 +5,17 @@ import type { ClaimInput, ItemInput } from "../../src/domain/queue";
 // Interface under test (see the S-02 hand-off report):
 //   recalculate(item, claims, now) -> { unitsLeft, freeUnits, waitingCount, soldOut, claims[], changes }
 //   canMarkSold(item, claims, claimId) -> { ok: true } | { ok: false, reason }
-// `previousRole` is the role the claim had after the previous recalculation
-// (null = the claim is new, or was not active). It is what separates a
-// waiting -> holder promotion (stamped) from a claim that is simply a holder
-// from the start (not stamped). Callers persist the output role and pass it back.
+// D-026: `previousRole` is the role the claim had before this change:
+// "holder" | "waiting" | "sold" | "ended" | null, where null means only
+// "created in this write". Becoming a holder from anything except "holder" or
+// null is a promotion (stamped, listed in changes.promoted). Result also has
+// `unavailable` (quantity 0 or not a whole number >= 0): no holders, flag for UI/API.
 
 const NOW = "2026-11-03T10:00:00.000Z";
 const EARLIER = "2026-11-02T09:00:00.000Z";
 const LATER = "2026-11-04T12:30:00.000Z";
 
-type Role = "holder" | "waiting" | null;
+type Role = "holder" | "waiting" | "sold" | "ended" | null;
 const item = (quantity: number, id = "item-1"): ItemInput => ({ id, quantity });
 const claim = (
   claimId: number,
@@ -105,6 +106,12 @@ describe("rules 1 and 2: line order and holders", () => {
     expect(r.unitsLeft).toBe(0);
     expect(Object.values(roles(r))).not.toContain("holder");
     expect(r.changes.promoted).toEqual([]);
+  });
+
+  it("is available (not unavailable) for ordinary quantities, including a sold-out item", () => {
+    expect(recalculate(item(3), settled(2, 3), NOW).unavailable).toBe(false);
+    expect(recalculate(item(1), [claim(1, "sold", "holder"), claim(2, "active", "waiting")], NOW).unavailable).toBe(false);
+    expect(recalculate(item(1), [], NOW).unavailable).toBe(false);
   });
 
   it("never reports negative unitsLeft or free units when sold claims exceed quantity (bad sheet data)", () => {
@@ -236,40 +243,56 @@ describe("rule 4 and T-06: undoing a sale or a release returns the original plac
     const before = recalculate(item(2), sold, NOW);
     expect(roles(before)).toEqual({ 1: "sold", 2: "holder", 3: "waiting" });
 
-    const undone = [claim(1, "active", null), claim(2, "active", "holder", NOW), claim(3, "active", "waiting")];
+    // D-026 section 1: the restored claim comes in as "sold", not null.
+    const undone = [claim(1, "active", "sold"), claim(2, "active", "holder", NOW), claim(3, "active", "waiting")];
     const r = recalculate(item(2), undone, LATER);
     expect(roles(r)).toEqual({ 1: "holder", 2: "holder", 3: "waiting" });
     expect(r.unitsLeft).toBe(2);
+    expect(byId(r, 1).promotedAt).toBe(LATER);
+    expect(byId(r, 2).promotedAt).toBe(NOW);
+    expect(r.changes).toEqual({ promoted: [1], demoted: [] });
   });
 
   it("T-06 (undo a sale, quantity 1): the sold-out waiter is demoted again and its promotedAt cleared", () => {
     // Sale undone while claim 2 had been promoted into the freed unit.
-    const claims = [claim(1, "active", null), claim(2, "active", "holder", EARLIER)];
+    // Restored claim 1 was "sold" (D-026). It is promoted (accepted cost); claim 2 is demoted.
+    const claims = [claim(1, "active", "sold"), claim(2, "active", "holder", EARLIER)];
     const r = recalculate(item(1), claims, NOW);
     expect(roles(r)).toEqual({ 1: "holder", 2: "waiting" });
     expect(byId(r, 2).promotedAt).toBeNull();
-    expect(byId(r, 1).promotedAt).toBeNull();
-    expect(r.changes).toEqual({ promoted: [], demoted: [2] });
+    expect(byId(r, 1).promotedAt).toBe(NOW);
+    expect(r.changes).toEqual({ promoted: [1], demoted: [2] });
     expect(byId(r, 2).position).toBe(1);
   });
 
-  it("T-06 (undo a release after a promotion): original claim regains its place, promotedAt cleared from the other claim", () => {
+  it("T-06 (undo a release after a promotion): original claim regains its place and is promoted (accepted cost), the other claim is demoted with promotedAt cleared", () => {
     const released = recalculate(item(1), [claim(1, "released", "holder"), claim(2, "active", "waiting")], EARLIER);
     expect(byId(released, 2).role).toBe("holder");
     expect(byId(released, 2).promotedAt).toBe(EARLIER);
 
     // Seller changes claim 1 back to active; feed back what was persisted.
-    const r = recalculate(item(1), [claim(1, "active", null), claim(2, "active", "holder", byId(released, 2).promotedAt)], NOW);
+    const r = recalculate(item(1), [claim(1, "active", "ended"), claim(2, "active", "holder", byId(released, 2).promotedAt)], NOW);
     expect(roles(r)).toEqual({ 1: "holder", 2: "waiting" });
     expect(byId(r, 2).promotedAt).toBeNull();
-    expect(byId(r, 1).promotedAt).toBeNull();
+    expect(byId(r, 1).promotedAt).toBe(NOW);
     expect(r.changes.demoted).toEqual([2]);
-    expect(r.changes.promoted).toEqual([]);
+    expect(r.changes.promoted).toEqual([1]);
   });
 
-  it("undoing a release restores the claim even when it was formerly waiting and unitsLeft covers it", () => {
-    const r = recalculate(item(3), [claim(1, "active", "holder"), claim(2, "active", null), claim(3, "active", "holder"), claim(4, "active", "waiting")], NOW);
+  it("T-06 undo of a sale (previousRole 'sold') and of a release ('ended') both promote the original holder who regains a unit", () => {
+    for (const prev of ["sold", "ended"] as const) {
+      const r = recalculate(item(1), [claim(1, "active", prev), claim(2, "active", "holder", EARLIER)], NOW);
+      expect(r.changes).toEqual({ promoted: [1], demoted: [2] });
+      expect(byId(r, 1).promotedAt).toBe(NOW);
+      expect(byId(r, 2).promotedAt).toBeNull();
+    }
+  });
+
+  it("undoing a release restores the claim even when it was formerly waiting and unitsLeft covers it (promoted, D-026)", () => {
+    const r = recalculate(item(3), [claim(1, "active", "holder"), claim(2, "active", "ended"), claim(3, "active", "holder"), claim(4, "active", "waiting")], NOW);
     expect(roles(r)).toEqual({ 1: "holder", 2: "holder", 3: "holder", 4: "waiting" });
+    expect(r.changes.promoted).toEqual([2]);
+    expect(byId(r, 2).promotedAt).toBe(NOW);
   });
 });
 
@@ -336,6 +359,159 @@ describe("rule 8: sold out", () => {
   });
 });
 
+describe("D-026 section 1: promotion is any change into holder from a previous role other than holder or null", () => {
+  it("F1 repro: quantity 2, claims 1 and 2 released, claim 3 restored from sold, claim 4 waiting: 3 and 4 are both promoted and stamped", () => {
+    const claims = [claim(1, "released", "holder"), claim(2, "released", "holder"), claim(3, "active", "sold"), claim(4, "active", "waiting")];
+    const r = recalculate(item(2), claims, NOW);
+    expect(roles(r)).toEqual({ 1: "ended", 2: "ended", 3: "holder", 4: "holder" });
+    expect(byId(r, 3).promotedAt).toBe(NOW);
+    expect(byId(r, 4).promotedAt).toBe(NOW);
+    expect(r.changes.promoted).toEqual([3, 4]);
+  });
+
+  it("promotes a claim restored from 'ended' that lands as a holder", () => {
+    const r = recalculate(item(1), [claim(1, "active", "ended")], NOW);
+    expect(byId(r, 1).role).toBe("holder");
+    expect(byId(r, 1).promotedAt).toBe(NOW);
+    expect(r.changes).toEqual({ promoted: [1], demoted: [] });
+  });
+
+  it("does not promote or stamp a restored claim that lands as a waiter", () => {
+    for (const prev of ["sold", "ended"] as const) {
+      const r = recalculate(item(1), [claim(1, "active", "holder"), claim(2, "active", prev, EARLIER)], NOW);
+      expect(byId(r, 2).role).toBe("waiting");
+      expect(byId(r, 2).position).toBe(1);
+      expect(byId(r, 2).promotedAt).toBeNull();
+      expect(r.changes).toEqual({ promoted: [], demoted: [] });
+    }
+  });
+
+  it("does not promote a claim whose previousRole is 'holder' (still holding)", () => {
+    const r = recalculate(item(1), [claim(1, "active", "holder", EARLIER)], NOW);
+    expect(r.changes.promoted).toEqual([]);
+  });
+
+  it("does not stamp a new claim (previousRole null) that holds, and keeps new claims in line order behind promoted ones", () => {
+    const r = recalculate(item(2), [claim(1, "active", "ended"), claim(2, "active", null)], NOW);
+    expect(r.changes.promoted).toEqual([1]);
+    expect(byId(r, 2).role).toBe("holder");
+    expect(byId(r, 2).promotedAt).toBeNull();
+  });
+});
+
+describe("F6: promotedAt comes from the role transition, never from stale input", () => {
+  it("a holder whose previousRole is 'holder' keeps its incoming promotedAt", () => {
+    const r = recalculate(item(1), [claim(1, "active", "holder", EARLIER)], LATER);
+    expect(byId(r, 1).promotedAt).toBe(EARLIER);
+  });
+
+  it("a claim becoming holder from 'waiting' gets exactly now, even if the input carried a stale promotedAt", () => {
+    const r = recalculate(item(1), [claim(1, "active", "waiting", EARLIER)], NOW);
+    expect(byId(r, 1).promotedAt).toBe(NOW);
+  });
+
+  it("a claim becoming holder from 'sold' or 'ended' gets exactly now, even with a stale promotedAt", () => {
+    for (const prev of ["sold", "ended"] as const) {
+      const r = recalculate(item(1), [claim(1, "active", prev, EARLIER)], NOW);
+      expect(byId(r, 1).promotedAt).toBe(NOW);
+    }
+  });
+
+  it("a new claim (previousRole null) that holds gets null even if the input carried a stale promotedAt", () => {
+    const r = recalculate(item(1), [claim(1, "active", null, EARLIER)], NOW);
+    expect(byId(r, 1).role).toBe("holder");
+    expect(byId(r, 1).promotedAt).toBeNull();
+    expect(r.changes.promoted).toEqual([]);
+  });
+});
+
+describe("F5 and D-026 section 3: quantity 0 is unavailable, not sold out", () => {
+  // Design choice: claims on an unavailable item keep role 'waiting' with
+  // positions (itemSold false), so the data is kept and restoring the quantity
+  // restores the line. The `unavailable` flag tells the UI/API to hide the item.
+  it("quantity 0 with nothing sold: unavailable true, soldOut false, no units, no holders", () => {
+    const r = recalculate(item(0), [claim(1), claim(2)], NOW);
+    expect(r.unavailable).toBe(true);
+    expect(r.soldOut).toBe(false);
+    expect(r.unitsLeft).toBe(0);
+    expect(r.freeUnits).toBe(0);
+    expect(Object.values(roles(r))).not.toContain("holder");
+  });
+
+  it("quantity 0: claims keep role 'waiting' with 1-based positions and are not marked 'item sold'", () => {
+    const r = recalculate(item(0), [claim(1), claim(2)], NOW);
+    expect(roles(r)).toEqual({ 1: "waiting", 2: "waiting" });
+    expect(byId(r, 1).position).toBe(1);
+    expect(byId(r, 2).position).toBe(2);
+    expect(byId(r, 1).itemSold).toBe(false);
+    expect(r.waitingCount).toBe(2);
+  });
+
+  it("quantity 0 with no claims is unavailable and not sold out", () => {
+    const r = recalculate(item(0), [], NOW);
+    expect(r.unavailable).toBe(true);
+    expect(r.soldOut).toBe(false);
+  });
+
+  it("setting quantity to 0 demotes former holders and clears their promotedAt", () => {
+    const r = recalculate(item(0), [claim(1, "active", "holder", EARLIER)], NOW);
+    expect(byId(r, 1).role).toBe("waiting");
+    expect(byId(r, 1).promotedAt).toBeNull();
+    expect(r.changes).toEqual({ promoted: [], demoted: [1] });
+  });
+
+  it("restoring the quantity from 0 promotes the first waiter(s) so the line comes back", () => {
+    const r = recalculate(item(1), [claim(1, "active", "waiting"), claim(2, "active", "waiting")], NOW);
+    expect(r.unavailable).toBe(false);
+    expect(r.changes.promoted).toEqual([1]);
+  });
+
+  it("soldOut is true only when at least one unit is sold and none are left", () => {
+    expect(recalculate(item(1), [claim(1, "sold", "holder")], NOW).soldOut).toBe(true);
+    expect(recalculate(item(1), [claim(1)], NOW).soldOut).toBe(false);
+    expect(recalculate(item(0), [], NOW).soldOut).toBe(false);
+  });
+});
+
+describe("F2: invalid quantities are unavailable and nobody gets a hold", () => {
+  const bad: Array<[string, unknown]> = [
+    ["NaN", NaN],
+    ["Infinity", Infinity],
+    ["-Infinity", -Infinity],
+    ["-1", -1],
+    ["2.5", 2.5],
+    ["a numeric string", "3"],
+    ["undefined", undefined],
+    ["null", null],
+  ];
+  const badItem = (q: unknown): ItemInput => ({ id: "item-1", quantity: q as number });
+
+  for (const [label, q] of bad) {
+    it(`recalculate: quantity ${label} gives unavailable true, unitsLeft 0, freeUnits 0 and no holders`, () => {
+      const r = recalculate(badItem(q), [claim(1), claim(2, "active", "holder", EARLIER)], NOW);
+      expect(r.unavailable).toBe(true);
+      expect(r.unitsLeft).toBe(0);
+      expect(r.freeUnits).toBe(0);
+      expect(Object.values(roles(r))).not.toContain("holder");
+      expect(r.changes.promoted).toEqual([]);
+      expect(byId(r, 2).promotedAt).toBeNull();
+    });
+
+    it(`canMarkSold: quantity ${label} is refused with a plain reason`, () => {
+      const res = canMarkSold(badItem(q), [claim(1)], 1);
+      expect(res.ok).toBe(false);
+      if (!res.ok) {
+        expect(res.reason.trim().length).toBeGreaterThan(0);
+        expect(res.reason).not.toMatch(/NaN|undefined|Infinity/);
+      }
+    });
+  }
+
+  it("canMarkSold: a valid whole-number quantity is still accepted", () => {
+    expect(canMarkSold(item(1), [claim(1)], 1)).toEqual({ ok: true });
+  });
+});
+
 describe("rule 6: pure, deterministic and idempotent (the lock is the caller's job)", () => {
   const scenario = () => [claim(1, "released", "holder"), claim(2, "active", "holder"), claim(3, "active", "waiting"), claim(4, "active", "waiting")];
 
@@ -364,10 +540,10 @@ describe("rule 6: pure, deterministic and idempotent (the lock is the caller's j
   it("applying the result and recalculating again changes nothing and does not promote twice", () => {
     const first = recalculate(item(2), scenario(), NOW);
     expect(first.changes.promoted).toEqual([3]);
-    // Persist: role -> previousRole, promotedAt as returned, state unchanged.
+    // Persist: role -> previousRole (D-026 section 2), promotedAt as returned, state unchanged.
     const persisted = scenario().map((c) => {
       const out = byId(first, c.claimId);
-      return { ...c, previousRole: out.role === "holder" || out.role === "waiting" ? out.role : null, promotedAt: out.promotedAt };
+      return { ...c, previousRole: out.role, promotedAt: out.promotedAt };
     });
     const second = recalculate(item(2), persisted, LATER);
     expect(second.changes).toEqual({ promoted: [], demoted: [] });
