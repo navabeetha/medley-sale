@@ -107,17 +107,41 @@ export function scanPaths(paths) {
   });
 }
 
+// Commit metadata is public too: scan messages and author/committer identities. Findings
+// name the commit (short sha) and part, never the matched value.
+export const GIT_LOG_FORMAT = "%H%x1f%an%x1f%ae%x1f%cn%x1f%ce%x1f%B%x1e";
+
+export function parseLog(text) {
+  return text.split("\x1e").flatMap((rec) => {
+    const [sha, authorName, authorEmail, committerName, committerEmail, ...msg] = rec.replace(/^\n/, "").split("\x1f");
+    if (!sha) return [];
+    return [{ sha, authorName, authorEmail, committerName, committerEmail, message: msg.join("\x1f").trimEnd() }];
+  });
+}
+
+export function scanCommits(commits, blocked = []) {
+  return commits.flatMap((c) => {
+    const at = `commit ${c.sha.slice(0, 7)}`;
+    return [
+      ...scanText(`${at} message`, c.message, blocked),
+      ...scanText(`${at} author`, `${c.authorName} <${c.authorEmail}>`, blocked),
+      ...scanText(`${at} committer`, `${c.committerName} <${c.committerEmail}>`, blocked),
+    ];
+  });
+}
+
+export function readBlockedWords(env = process.env) {
+  const listFile = env.PII_BLOCKED_WORDS_FILE ?? "private/blocked-words.txt";
+  return loadBlockedWords(env.PII_BLOCKED_WORDS, existsSync(listFile) ? readFileSync(listFile, "utf8") : undefined);
+}
+
 const git = (...args) =>
   execFileSync("git", args, { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 }).split("\0").filter(Boolean);
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const tracked = git("ls-files", "-z");
   const untracked = git("ls-files", "-z", "--others", "--exclude-standard");
-  const listFile = process.env.PII_BLOCKED_WORDS_FILE ?? "private/blocked-words.txt";
-  const blocked = loadBlockedWords(
-    process.env.PII_BLOCKED_WORDS,
-    existsSync(listFile) ? readFileSync(listFile, "utf8") : undefined,
-  );
+  const blocked = readBlockedWords();
   const problem = blockedWordsProblem(blocked, blockedWordsRequired(process.argv.slice(2), process.env));
   if (problem) console[problem.fail ? "error" : "warn"](problem.message);
   const findings = scanPaths(tracked);
@@ -127,6 +151,11 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     if (buf.subarray(0, 8000).includes(0)) continue; // binary
     findings.push(...scanText(file, buf.toString("utf8"), blocked));
   }
+  // Everything reachable from HEAD (CI checks out full history). No commits yet is fine.
+  try {
+    const log = execFileSync("git", ["log", `--format=${GIT_LOG_FORMAT}`, "HEAD"], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024, stdio: ["ignore", "pipe", "ignore"] });
+    findings.push(...scanCommits(parseLog(log), blocked));
+  } catch { /* no commits */ }
   for (const f of findings) console.error(`FAIL ${f.file}${f.line ? `:${f.line}` : ""}  ${f.rule}`);
   console.log(`pii-scan: ${tracked.length + untracked.length} files, ${findings.length} finding(s)`);
   process.exit(findings.length || problem?.fail ? 1 : 0);

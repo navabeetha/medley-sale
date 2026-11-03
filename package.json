@@ -16,6 +16,7 @@
     "test": "npm run test:unit && npm run test:e2e",
     "size": "npm run build && node tools/size-budget.mjs dist",
     "pii": "node tools/pii-scan.mjs",
+    "prepare": "git rev-parse --git-dir >/dev/null 2>&1 && git config core.hooksPath .githooks || true",
     "check": "npm run typecheck && npm run lint && npm test && npm run size && npm run pii"
   },
   "devDependencies": {
