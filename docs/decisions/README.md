@@ -42,5 +42,6 @@ New decisions are recorded here, one file each: `D-016-<slug>.md`, `D-017-<slug>
 | [D-031](D-031-photo-pipeline-hardening.md) | Photo pipeline hardening: raw media, reported skips, empty-export guard, hard budgets | Proposed |
 | [D-032](D-032-photo-size-fallback.md) | A photo that won't fit at 1000 px shrinks in 10% steps (down to 600 px), not refused | Proposed |
 | [D-033](D-033-catalogue-timings.md) | Catalogue live timings: hits ~1.7 s, cache misses ~12 s (over 3 s, raised); CORS works (D-001 GO) | Measured |
+| [D-034](D-034-browse-only-first-release.md) | Browse-only first release (Slice 1), warm catalogue every 5 min, WhatsApp link from Script Properties | Accepted (the seller) |
 
-**Next free ID: D-034.** Update this line and the index whenever you add a decision.
+**Next free ID: D-035.** Update this line and the index whenever you add a decision.
