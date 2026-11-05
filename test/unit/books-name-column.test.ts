@@ -9,15 +9,18 @@ import { buildStagingTitled } from "../fixtures/title-row-fixture";
 
 const NOW = "2026-11-05T10:00:00.000Z";
 
-/** Renames the Books "Item" header to "Brand", as on the live copy. */
-function liveBooksLayout(): FakeSpreadsheet {
+/** The live Books heading, copied from the build copy's header row (2026-11-05). */
+const LIVE_BOOKS_NAME_HEADER = "Brand (+ Link)";
+
+/** Renames the Books "Item" header, by default to the live copy's heading. */
+function liveBooksLayout(header = LIVE_BOOKS_NAME_HEADER): FakeSpreadsheet {
   const ss = buildStagingTitled();
   const books = ss.getTab("Books")!;
   const grid = books.getGrid();
   const hr = grid.findIndex((r) => r.includes("Person"));
   const col = grid[hr]!.indexOf("Item");
   expect(col).toBeGreaterThanOrEqual(0);
-  books.setCell(hr + 1, col + 1, "Brand");
+  books.setCell(hr + 1, col + 1, header);
   return ss;
 }
 
@@ -27,8 +30,8 @@ function run(ss: FakeSpreadsheet) {
 }
 
 describe("Books name column (D-028)", () => {
-  it("migrates a Books tab whose book name is under Brand", () => {
-    const ss = liveBooksLayout();
+  it.each([LIVE_BOOKS_NAME_HEADER, "Brand"])("migrates a Books tab whose book name is under %j", (header) => {
+    const ss = liveBooksLayout(header);
     expect(() => run(ss)).not.toThrow();
   });
 
