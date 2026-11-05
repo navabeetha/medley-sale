@@ -62,8 +62,22 @@ export interface MigrateResult {
 
 // ---- Names that depend on the real sheet: extend here once headers are known.
 
-/** Accepted headers for the item-name column (Books may differ from the rest). */
+/** Accepted headers for the item-name column on every tab. */
 export const ITEM_NAME_HEADERS = ["Item"];
+/**
+ * D-028: the real Books tab has no "Item" column. It was copied from the item
+ * layout, so the book name sits under "Brand" (with its link), next to "Author".
+ * "Item" still wins when a Books tab has both.
+ */
+const BOOKS = "Books";
+const BOOKS_NAME_FALLBACK = "Brand";
+
+/** 1-based column of the item (or book) name on this tab, or 0. */
+function itemNameCol(tab: Tab, head: CellValue[]): number {
+  const c = findCol(head, ITEM_NAME_HEADERS);
+  if (c || tab.name !== BOOKS) return c;
+  return colOf(head, BOOKS_NAME_FALLBACK);
+}
 const PERSON = "Person";
 const STATUS = "Status";
 const PRICE = "Price";
@@ -258,7 +272,7 @@ function validateTab(tab: Tab): ItemRow[] {
   const hr = findHeaderRow(grid);
   if (hr < 0) throw noHeader(tab);
   const head = grid[hr]!;
-  requireCol(tab, head, ITEM_NAME_HEADERS);
+  if (!itemNameCol(tab, head)) throw new Error(`Tab "${tab.name}" has no "${ITEM_NAME_HEADERS[0]}" column`);
   const statusCol = requireCol(tab, head, [STATUS]);
   requireCol(tab, head, [PERSON]);
   const skip = [colOf(head, ID), colOf(head, QUANTITY)];
@@ -443,7 +457,7 @@ export function migrate(ss: Spreadsheet, opts: MigrateOptions): MigrateResult {
     claimed.add(itemId);
 
     const name = guardText(String(person));
-    const item = guardText(String(cells[findCol(head, ITEM_NAME_HEADERS) - 1] ?? ""));
+    const item = guardText(String(cells[itemNameCol(tab, head) - 1] ?? ""));
     const price = cells[colOf(head, PRICE) - 1];
     if (status === "Sold" && !isBlank(price) && typeof price !== "number") result.soldWithTextPrice++;
     const now = opts.now();
