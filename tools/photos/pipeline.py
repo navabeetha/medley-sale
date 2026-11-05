@@ -99,7 +99,7 @@ def _scan(xlsx_path):
                     if target not in media:
                         continue  # a shape or chart, not a picture we can read
                     used.add(target)
-                    start = anchor.find(_NS_XDR + "from")
+                    start = next(anchor.iter(_NS_XDR + "from"), None)  # iter: also finds it inside mc:AlternateContent
                     if start is None:  # absoluteAnchor
                         row, col = None, 0
                     else:
@@ -350,8 +350,11 @@ def process(image_bytes):
     """Return (thumb_webp, full_webp, width, height); width/height are the full image's."""
     im = Image.open(io.BytesIO(image_bytes))
     im.load()
-    im = _to_srgb(im)
+    # Orientation first: exif_transpose reads the tag from the image it is given, and
+    # converting colours first would lose it and ship sideways photos. Then colour
+    # (the ICC profile is dropped later), then fresh RGB pixels with no metadata.
     im = ImageOps.exif_transpose(im)  # orientation applied to the pixels...
+    im = _to_srgb(im)
     im = _flatten_to_rgb(im)  # ...and convert() gives a fresh image carrying no metadata
     im.info.clear()
 
