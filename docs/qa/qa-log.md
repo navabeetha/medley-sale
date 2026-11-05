@@ -574,3 +574,88 @@ None at S1 or S2.
   - a formula-like name shows as text
   - a rerun creates nothing
 - Mutants were run against the S-03 test files only.
+
+## 2026-11-05: S-03 bug fix D-027 (header row found, not assumed to be row 1)
+
+Commits since 27a99fa: f475615 (red tests), 27b6708 (`findHeaderRow` in `src/api/header-row.ts`, used throughout `src/api/migrate.ts`), c32758a (sheet.ts comment) and 6c0fe2e (two test corrections). QA agent. No clasp was run and no sheet was touched. Synthetic data only.
+
+Why this exists: the first live `scrubStaging` on the build copy logged `WARNING no Person column found` for Tech, Gym & Sport, Home Things, Books and Template, replaced 0 people and cleared 13 number cells. The real tabs have a title on row 1 and the headers on row 2. Every S-03 path read `grid[0]` as the header. D-027 is the spec.
+
+### Verified
+
+- **Gate:** `npm run check` run fresh (without `npm ci`; the dependencies were already installed). Exit 0. Vitest: 18 files, 403 tests. Playwright: 16 passed. Size: 0.7 KB of 50 KB. `pii-scan: 97 files, 0 finding(s)`.
+- **Tests first:** f475615 contains only the tests and the fixture. The implementation follows in 27b6708.
+- **Test corrections in 6c0fe2e are right.** `quantitiesSet = ids.length + 1` matches migrate.test.ts (11 + 1, the +1 being Template's example row), and my simulation gives 12. The inverted hardening test ("title row above headers" is no longer flagged and its Person is replaced) is what D-027 rule 1 requires.
+- **No row-1 assumption is left on item tabs or Template in `src/`.** I grepped for `grid[0]`, `slice(1)`, `r = 1` and `setCell(1`. What's left is only on Claims, Bookings, To do and Sold (row 1 by D-027 rule 6), plus the `tabsWithoutPerson` "has data" check (`grid.slice(1)`), which is harmless. No other module in `src/` reads item tabs yet: `header-row.ts`, `migrate.ts`, `random.ts`, `sheet.ts`, and the adapter has no logic.
+- **The re-run the seller will actually do, simulated.** I took the titled fixture, ran the **old** scrub (27a99fa) once, then the new scrub twice, then migrate.
+  - Run 1 (old code) reproduced the live symptom: WARNING for all 5 tabs, 0 people.
+  - Run 2 (new code): 6 of 6 people replaced, 0 numbers, 0 notes, no WARNING lines. No fixture buyer name is left anywhere.
+  - Run 3: the same counts. It renumbers the same cells, so it's idempotent in effect.
+  - Migrate after that passes the preflight: 10 columns, 4 tabs, 11 IDs, 12 quantities, 6 claims.
+- **The migrate preflight (question 4)** checks only the rows below the detected header. A name in a row above the header is never a data row. `validateTab`, ID and quantity filling, and claim creation all start at `hr + 1`, so it can't become a claim. Pinned by the "does not read title rows as items" and "writes nothing into row 1" tests, and by the mutants below.
+- **Template with its header on row 3** (not covered by the tests; I ran it by hand). ID and Quantity land on row 3, the note row 2 is untouched, and the example row on row 4 gets Quantity 1 and no ID. Correct.
+- **Width (question 3).** The real adapter's `getGrid` is `getDataRange().getValues()`, which is rectangular. So `head.length` is the tab's last used column across **all** rows, and ID and Quantity land just to the right of the rightmost content anywhere in the tab (title row included). That never overwrites data, but it's K and L only if nothing sits to the right of the last header. On the fake, rows can be ragged. A header shorter than a data row would overwrite that data cell in the fake, but this can't happen on the real adapter. The behaviour is the same as before D-027.
+- **Hidden tabs:** `getSheets()` returns hidden sheets, so they are scrubbed. (Desk check of the Apps Script docs, not run.)
+- **Mutants:** 14 run against the full unit suite (baseline 403 green). **11 killed**:
+  - search window 4 and 6
+  - dropping `trim`
+  - always returning row 0
+  - scanning numbers on row 1 only
+  - replacing people from the header row itself
+  - the preflight skipping the first data row, or using `slice(1)`
+  - writing the ID header to row 1
+  - ID seeding skipping the first data row
+  - `validateTab` skipping the first data row
+
+  **3 survive:**
+  - Formula and link keys limited to row 1. This only affects formula or link cells missing from `getGrid`. On the real adapter all three use `getDataRange`, so this is equivalent there.
+  - Template's quantity loop starting at index 1. Equivalent when the header is on row 2, because the header's own Quantity cell isn't blank. It would write `1` into a note row if Template's header were on row 3 or lower (see F-B).
+  - A case-insensitive `person` match. D-027 says "exactly", but no test pins it.
+
+### Findings (worst first)
+
+None at S1 or S2.
+
+- **F-A (S3, reproduced on the fake, latent): a stray cell reading exactly `Person` above the real header silently defeats the scrub for that tab.** I put `Person` in Tech L1. `findHeaderRow` picked row 1 and `personCol` became L. The scrub then reported `Tech: 0 people` with **no WARNING**, and 2 buyer names were left in Tech. When the stray cell is in the same column as the real Person header, the real header cell on row 2 is overwritten with `Test Person 1`. Migrate does refuse afterwards (`Tab "Tech" has no "Item" column`), so nothing reaches Claims. D-027's Cost section accepts this case, but only for migrate. The scrub has no equivalent loud failure.
+  - **Live risk is very low:** the first live run read `grid[0]` and found no `Person` in row 1 of any tab, so row 1 is known to be clean. Rows 3 to 5 could only matter if a tab's header is below row 2.
+  - Covered by the by-eye check. Suggested fix: the scrub warns when the detected header row has no `Status` (or item-name) cell, or when a tab with data replaces 0 people.
+- **F-B (S4): coverage gaps.**
+  - Template with its header on row 3 or lower is untested. It works, but the survivor above means a regression would go unnoticed.
+  - Exact-case `Person` isn't pinned.
+  - A formula or link on the header row that's absent from `getGrid` isn't pinned (fake-only).
+- **F-C (S4): first-run side effect the seller may notice.** Run 1 scanned **every** cell of the five tabs, data rows included, because no Person column was found. That cleared 13 cells, so some data cells may now read `[removed]` (for example an ISBN, a long price or code, or a link with digits). This is harmless on the build copy, but the seller shouldn't read it as a fault of the re-run.
+- **F-D (S4): nit.** The `headerIdx` helper comment in `header-row.test.ts` says "within `limit`", but it has no limit.
+- Earlier R1 (WARNING is a log line only) still stands.
+
+### Verdict
+
+**Sign-off with follow-ups.** The D-027 fix may be pushed to the build copy and `scrubStaging()` re-run. F-A is latent, the live evidence makes it unlikely, and the by-eye check plus migrate's refusal cover it. Fix it (or the earlier R1) before S-04 relies on the copy. F-B to F-D are optional.
+
+### G0.3: exact steps for the seller re-run (replaces step 2 of the 2026-11-04 list; steps 1 and 3 to 8 are unchanged)
+
+1. As before, run **only** `scrubStaging` on the build copy.
+2. Read the Execution log to the end. It should have this shape. The tab order follows your tabs, and N is your own count per tab:
+   ```
+   scrubStaging: tab "README": 0 people, 0 numbers, 0 notes
+   scrubStaging: tab "Tech": N people, 0 numbers, 0 notes
+   scrubStaging: tab "Gym & Sport": N people, 0 numbers, 0 notes
+   scrubStaging: tab "Home Things": N people, 0 numbers, 0 notes
+   scrubStaging: tab "Books": N people, 0 numbers, 0 notes
+   scrubStaging: tab "Template": 0 people, 0 numbers, 0 notes
+   scrubStaging: README tab found (every cell scanned)
+   scrubStaging: ~10 people replaced, 0 cells cleared of numbers, 0 notes removed
+   ```
+   - **There must be no line containing WARNING.** If there is one, stop and tell the PM which tabs it names.
+   - **Each item tab's people count should match the number of filled Person cells you know it has.** If a tab you know has reservations shows `0 people`, stop and tell the PM, even without a WARNING (F-A).
+   - **Numbers and notes should be 0 or close to it,** because the first run already cleared them. A non-zero count isn't a failure, but tell the PM which tab it was on.
+   - Template can show 1 person if its example row has a Person filled in. That's fine.
+3. In the by-eye check (step 3 of the earlier list), also check **row 1 (the title row) of every tab**. No real name or phone number should appear there, because a name in a title row is not replaced.
+4. Cells reading `[removed]` in data rows are from the first run (F-C). Leave them.
+
+### Not verified
+
+- Nothing has run on real Sheets. The width, hidden-tab and `getDataRange` points are desk checks of the adapter and the Apps Script docs.
+- The exact live counts. They depend on the seller's data, which QA must not read.
+- Tabs other than Tech and Books actually having their header on row 2 (the seller confirmed only those two). Any row from 1 to 5 works. Row 6 or lower gives the WARNING.
+- The post-migrate live checks listed on 2026-11-04 are still outstanding.
+- I did not run Playwright beyond the gate, or `build:gas`.
