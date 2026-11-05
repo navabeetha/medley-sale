@@ -28,9 +28,12 @@ from __future__ import annotations
 
 import io
 import json
+import posixpath
 import re
 import sys
+import zipfile
 from pathlib import Path
+from xml.etree import ElementTree as ET
 
 from openpyxl import load_workbook
 from PIL import Image, ImageDraw, ImageOps
@@ -39,29 +42,82 @@ THUMB_SIZE = 144
 THUMB_MAX_BYTES = 12 * 1024  # brief 8.1
 FULL_LONGEST_SIDE = 1000
 FULL_MAX_BYTES = 120 * 1024  # brief 8.1
+MIN_QUALITY = 30  # D-031 rule 4: below this a photo looks bad; give up and say so instead
 HEADER_SEARCH_ROWS = 5  # D-027: the header is the first of the top 5 rows with "Person"
 
 
 # ---------------------------------------------------------------- 1. extract
 
 
+_NS_MAIN = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
+_NS_REL = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
+_NS_PKG_REL = "{http://schemas.openxmlformats.org/package/2006/relationships}"
+_NS_XDR = "{http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing}"
+_NS_A = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
+
+
+def _rels(zf, part):
+    """{rId: absolute zip path} for a part's .rels file (empty if it has none)."""
+    folder, name = posixpath.split(part)
+    rels_path = posixpath.join(folder, "_rels", name + ".rels")
+    if rels_path not in zf.namelist():
+        return {}
+    out = {}
+    for rel in ET.fromstring(zf.read(rels_path)):
+        target = rel.get("Target", "")
+        out[rel.get("Id")] = target.lstrip("/") if target.startswith("/") else posixpath.normpath(posixpath.join(folder, target))
+    return out
+
+
+def _scan(xlsx_path):
+    """Read pictures straight from the workbook zip. Returns (images, media_files, media_used).
+
+    images: [(tab, row_or_None, bytes)] in tab, row, column order. `row` is the
+    1-based row of the top-left anchor, or None for an absoluteAnchor picture
+    (floating on the page, tied to no cell). Bytes are the xl/media file exactly
+    as stored (D-031 rule 1), because openpyxl re-saves some formats and loses
+    the EXIF orientation.
+    """
+    found = []
+    used = set()
+    with zipfile.ZipFile(xlsx_path) as zf:
+        media = {n for n in zf.namelist() if n.startswith("xl/media/") and not n.endswith("/")}
+        sheets = [(sh.get("name"), sh.get(_NS_REL + "id")) for sh in ET.fromstring(zf.read("xl/workbook.xml")).iter(_NS_MAIN + "sheet")]
+        wb_rels = _rels(zf, "xl/workbook.xml")
+        for tab_index, (tab, rid) in enumerate(sheets):
+            sheet_part = wb_rels.get(rid)
+            if not sheet_part:
+                continue
+            for rel in ET.fromstring(zf.read(sheet_part)).iter(_NS_MAIN + "drawing"):
+                drawing_part = _rels(zf, sheet_part).get(rel.get(_NS_REL + "id"))
+                if not drawing_part or drawing_part not in zf.namelist():
+                    continue
+                drawing_rels = _rels(zf, drawing_part)
+                for anchor in ET.fromstring(zf.read(drawing_part)):
+                    blip = next(anchor.iter(_NS_A + "blip"), None)
+                    target = drawing_rels.get(blip.get(_NS_REL + "embed")) if blip is not None else None
+                    if target not in media:
+                        continue  # a shape or chart, not a picture we can read
+                    used.add(target)
+                    start = anchor.find(_NS_XDR + "from")
+                    if start is None:  # absoluteAnchor
+                        row, col = None, 0
+                    else:
+                        row = int(start.find(_NS_XDR + "row").text) + 1  # file is 0-based
+                        col = int(start.find(_NS_XDR + "col").text)
+                    found.append((tab_index, -1 if row is None else row, col, tab, row, zf.read(target)))
+    found.sort(key=lambda f: f[:3])
+    return [(tab, row, data) for _, _, _, tab, row, data in found], len(media), len(used)
+
+
 def extract_images(xlsx_path):
     """Return [(tab, row, image_bytes)] ordered by tab, then row, then column.
 
     `row` is the 1-based sheet row of the image's top-left anchor, so a picture
-    that straddles several rows belongs to the first one.
+    that straddles several rows belongs to the first one. It is None for an
+    absoluteAnchor picture, which map_to_items reports as skipped.
     """
-    wb = load_workbook(xlsx_path)  # not read_only: that mode drops images
-    found = []
-    for tab_index, ws in enumerate(wb.worksheets):
-        for img in ws._images:
-            anchor = img.anchor
-            if isinstance(anchor, str):  # only for images we added ourselves, not loaded ones
-                continue
-            # openpyxl's anchors are 0-based; sheet rows are 1-based.
-            found.append((tab_index, anchor._from.row + 1, anchor._from.col, ws.title, img._data()))
-    found.sort(key=lambda f: f[:3])
-    return [(tab, row, data) for _, row, _, tab, data in found]
+    return _scan(xlsx_path)[0]
 
 
 # ------------------------------------------------------------------ 2. map
@@ -102,7 +158,9 @@ def _read_tab(ws):
     if id_col is None:
         return None
     # D-028: Books has no `Item` column; the name is under `Brand (+ Link)` (or `Brand`).
-    name_col = _column_of(ws, header, "item", "brand (+ link)", "brand")
+    # That fallback is for Books only (D-031 rule 5): elsewhere Brand is a brand, not a name.
+    names = ("item", "brand (+ link)", "brand") if _norm(ws.title) == "books" else ("item",)
+    name_col = _column_of(ws, header, *names)
     rows = {}
     for r in range(header + 1, ws.max_row + 1):
         raw = ws.cell(row=r, column=id_col).value
@@ -112,6 +170,14 @@ def _read_tab(ws):
         name = ws.cell(row=r, column=name_col).value if name_col else None
         rows[r] = (item_id, str(name).strip() if name is not None else "")
     return header, rows
+
+
+def _decodable(data):
+    try:
+        Image.open(io.BytesIO(data)).load()
+        return True
+    except Exception:
+        return False
 
 
 def map_to_items(xlsx_path, extracted):
@@ -140,7 +206,11 @@ def map_to_items(xlsx_path, extracted):
     items, skipped = {}, []
     for tab_name, row, data in extracted:
         tab = tabs.get(tab_name)
-        if tab is None:
+        if row is None:
+            reason = "picture has an absolute anchor (not tied to a row)"
+        elif not _decodable(data):
+            reason = "image could not be decoded (corrupt or unsupported format)"
+        elif tab is None:
             reason = f"tab has no header row with a Person cell in its top {HEADER_SEARCH_ROWS} rows, or no ID column"
         elif row <= tab[0]:
             reason = "image sits on a title or header row"
@@ -258,22 +328,22 @@ def _saliency_window(im):
 
 
 def _encode_webp(im, max_bytes, start_quality):
-    """Encode as WebP, stepping quality down until the file fits the byte budget.
+    """Encode as WebP, stepping quality down (floor MIN_QUALITY) until it fits the byte budget.
 
+    Raises ValueError if even the floor is too big; an over-budget file is never returned.
     Saved with no exif/xmp/icc arguments and an emptied `info`, so Pillow has
     nothing to write besides the bitstream. method=6 is slowest/smallest and
     deterministic.
     """
     im = im.copy()
     im.info.clear()
-    data = b""
-    for quality in range(start_quality, 0, -4):
+    qualities = list(range(start_quality, MIN_QUALITY, -4)) + [MIN_QUALITY]
+    for quality in qualities:
         buf = io.BytesIO()
         im.save(buf, "WEBP", quality=quality, method=6)
-        data = buf.getvalue()
-        if len(data) <= max_bytes:
-            break
-    return data
+        if buf.tell() <= max_bytes:
+            return buf.getvalue()
+    raise ValueError(f"does not fit {max_bytes // 1024} KB even at quality {MIN_QUALITY}")
 
 
 def process(image_bytes):
@@ -331,15 +401,29 @@ def _contact_sheet(entries, path):
     sheet.save(path, quality=85)
 
 
-def run(xlsx_path, out_dir, contact_sheet_path):
+def _published_items(out_dir):
+    """True if out_dir/manifest.json already lists at least one item."""
+    try:
+        return bool(json.loads((out_dir / "manifest.json").read_text(encoding="utf-8")))
+    except (OSError, ValueError):
+        return False
+
+
+def run(xlsx_path, out_dir, contact_sheet_path, allow_empty=False):
     """Run the whole pipeline. Returns a report dict (counts and the skipped list)."""
     out_dir, contact_sheet_path = Path(out_dir), Path(contact_sheet_path)
     # The contact sheet is for review only and must never be published (S-05 notes).
     if contact_sheet_path.resolve().is_relative_to(out_dir.resolve()):
         raise ValueError("The contact sheet must be outside the public photo folder.")
 
-    extracted = extract_images(xlsx_path)
+    extracted, media_files, media_used = _scan(xlsx_path)
     items, skipped = map_to_items(xlsx_path, extracted)  # raises on duplicate IDs, before any write
+
+    # D-031 rule 3: a run that places nothing must not wipe photos already published
+    # (typically the wrong file, or an export made without images).
+    if not items and not allow_empty and _published_items(out_dir):
+        raise ValueError("No images were placed, but public photos already exist. Nothing was changed. "
+                         "Check you exported the right file, or pass allow_empty to clear the photos.")
 
     manifest, files, sheet_entries, stems = {}, {}, [], {}
     for item_id, item in items.items():
@@ -348,7 +432,10 @@ def run(xlsx_path, out_dir, contact_sheet_path):
             raise ValueError(f"IDs {stems[stem]!r} and {item_id!r} would share file names; nothing was written.")
         manifest[item_id] = []
         for n, data in enumerate(item["images"], start=1):
-            thumb, full, width, height = process(data)
+            try:
+                thumb, full, width, height = process(data)
+            except ValueError as err:  # over budget (D-031 rule 4); nothing has been written yet
+                raise ValueError(f"Photo {n} of item {item_id!r} {err}. Nothing was written.") from err
             entry = {"thumb": f"{stem}-{n}-thumb.webp", "full": f"{stem}-{n}.webp",
                      "width": width, "height": height, "alt": item["alt"]}
             manifest[item_id].append(entry)
@@ -366,21 +453,28 @@ def run(xlsx_path, out_dir, contact_sheet_path):
     (out_dir / "manifest.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     _contact_sheet(sheet_entries, contact_sheet_path)
 
-    return {"items": len(manifest), "photos": len(sheet_entries), "removed": removed, "skipped": skipped}
+    return {"items": len(manifest), "photos": len(sheet_entries), "removed": removed, "skipped": skipped,
+            "unplaced_media": media_files - media_used}
 
 
 def main(argv):
-    if len(argv) != 2:
-        print("usage: python tools/photos/pipeline.py private/<export>.xlsx")
+    args = [a for a in argv[1:] if a != "--allow-empty"]
+    if len(args) != 1:
+        print("usage: python tools/photos/pipeline.py private/<export>.xlsx [--allow-empty]")
         return 2
+    # Default folders are relative to the current folder. `npm run photos` always runs
+    # from the repo root. (A test pins this; run it from the repo root if calling directly.)
+    out_dir, sheet = Path("public/photos"), Path("private/contact-sheet.jpg")
     try:
-        report = run(argv[1], Path("public/photos"), Path("private/contact-sheet.jpg"))
+        report = run(args[0], out_dir, sheet, allow_empty="--allow-empty" in argv)
     except ValueError as err:
         print(f"Stopped: {err}")  # names tab, rows and ID only, never other cell text
         return 1
     print(f"{report['photos']} photos for {report['items']} items written to public/photos/ "
           f"({report['removed']} stale files removed).")
     print("Contact sheet: private/contact-sheet.jpg")
+    if report["unplaced_media"]:
+        print(f"{report['unplaced_media']} image files in the workbook were not placed on any row.")
     if report["skipped"]:
         print(f"{len(report['skipped'])} images skipped:")
         for s in report["skipped"]:
