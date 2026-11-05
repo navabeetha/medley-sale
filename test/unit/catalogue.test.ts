@@ -13,7 +13,7 @@
 //     author: string | null;      // Books only, else null
 //     category: string | null;    // Category column if present, else null
 //     price: number | null;       // blank -> null
-//     availableFrom: string | null; // Date cell -> ISO string (starts "YYYY-MM-DD"); text such as "Now" passes through; blank -> null
+//     availableFrom: string | null; // Date cell -> "YYYY-MM-DD" calendar date string (QA F1); text such as "Now" passes through; blank -> null
 //     notes: string | null;
 //     link: string | null;        // rich-text link on the brand / book-name cell; http(s) only, else null
 //     quantity: number;
@@ -189,9 +189,8 @@ describe("catalogue: blank price and date cells", () => {
   it("turns a Date cell in 'Available from' into an ISO date string", () => {
     const from = byName(items(build()), "Tiny Atlas").availableFrom;
     expect(typeof from).toBe("string");
-    // The fixture date is 2 Dec 2026 (UTC midnight); date-only or full ISO both start like this.
-    expect(from as string).toMatch(/^2026-12-02/);
-    expect(Number.isNaN(Date.parse(from as string))).toBe(false);
+    // The fixture date is 2 Dec 2026 at UTC midnight; the default formatter gives its UTC calendar date (QA F1).
+    expect(from).toBe("2026-12-02");
   });
 
   it("returns null for a blank 'Available from' and passes text such as 'Now' through", () => {
@@ -419,7 +418,7 @@ describe("catalogue on a scrubbed and migrated titled fixture", () => {
   it("keeps Books mapping, null price and ISO date after migration", () => {
     const list = items(migrated("Brand (+ Link)"));
     expect(byName(list, "Free Fall")).toMatchObject({ tab: "Books", author: "Author Q", price: null });
-    expect(byName(list, "Tiny Atlas").availableFrom).toMatch(/^2026-12-02/);
+    expect(byName(list, "Tiny Atlas").availableFrom).toBe("2026-12-02");
   });
 
   it("leaks nothing from Claims, Bookings or Person after migration", () => {
