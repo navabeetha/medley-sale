@@ -2,6 +2,7 @@
 // in src/api/migrate.ts. Logs counts only, never names, numbers or tokens.
 
 import { catalogue } from "../api/catalogue";
+import { CATALOGUE_CACHE_KEY, handleGet } from "../api/handle-get";
 import { migrate, scrubStaging } from "../api/migrate";
 import { uuidsToBytes } from "../api/random";
 import { activeSpreadsheet } from "./adapter";
@@ -38,30 +39,25 @@ export function migrateSheetRun(): void {
   });
 }
 
-const CATALOGUE_CACHE_KEY = "catalogue";
-/** Short on purpose: a reservation shows up within half a minute even if a write forgets to clear it. */
-const CATALOGUE_CACHE_SECONDS = 30;
-
-function json(body: unknown): GoogleAppsScript.Content.TextOutput {
-  return ContentService.createTextOutput(JSON.stringify(body)).setMimeType(ContentService.MimeType.JSON);
-}
-
 /**
- * Web-app GET entry (brief 4.3). Public and read-only: `?action=catalogue`
- * returns the catalogue JSON, anything else a JSON error. No token is involved,
- * and none may ever be read from the query string (tokens go in POST bodies).
- * The built catalogue is cached in CacheService (one key, 30 s). Write handlers
- * (S-11, S-14, S-15) must remove CATALOGUE_CACHE_KEY after changing the sheet
- * (D-030 rule 7). Photo counts are not wired yet, so photos is 0 (D-030 rule 3).
+ * Web-app GET entry (brief 4.3). Public and read-only; the logic and the cache
+ * rules are in src/api/handle-get.ts. Tokens never come from the query string.
+ * CATALOGUE_CACHE_KEY (re-exported from there) is the one cache key: write
+ * handlers (S-11, S-14, S-15) must remove it after changing the sheet, or the
+ * old catalogue is served for up to 30 s. Photo counts are not wired yet, so
+ * photos is 0 (D-030 rule 3).
  */
+export { CATALOGUE_CACHE_KEY };
+
 export function doGetRun(e?: { parameter?: Record<string, string> }): GoogleAppsScript.Content.TextOutput {
-  if (e?.parameter?.action !== "catalogue") return json({ error: "unknown action" });
-  const cache = CacheService.getScriptCache();
-  const hit = cache.get(CATALOGUE_CACHE_KEY);
-  if (hit) return ContentService.createTextOutput(hit).setMimeType(ContentService.MimeType.JSON);
-  const body = JSON.stringify(catalogue(activeSpreadsheet()));
-  // CacheService values are capped at 100 KB; skip caching rather than fail if it is bigger.
-  if (body.length < 90000) cache.put(CATALOGUE_CACHE_KEY, body, CATALOGUE_CACHE_SECONDS);
+  const body = handleGet(e?.parameter ?? {}, {
+    // Date cells arrive as midnight in the sheet's zone, so format them in that zone, not UTC (D-030 rule 6).
+    catalogue: () =>
+      catalogue(activeSpreadsheet(), {
+        formatDate: (d) => Utilities.formatDate(d, SpreadsheetApp.getActive().getSpreadsheetTimeZone(), "yyyy-MM-dd"),
+      }),
+    cache: CacheService.getScriptCache(),
+  });
   return ContentService.createTextOutput(body).setMimeType(ContentService.MimeType.JSON);
 }
 

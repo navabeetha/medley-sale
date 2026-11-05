@@ -30,10 +30,19 @@ export interface CatalogueItem {
 export interface CatalogueOptions {
   /** Photos per item ID (from the S-05 manifest). Missing means 0. */
   photoCounts?: Record<string, number>;
+  /**
+   * Turns a date cell into "YYYY-MM-DD" in the spreadsheet's time zone (D-030
+   * rule 6). The Apps Script adapter must inject Utilities.formatDate, because
+   * a midnight-IST date is the previous day in UTC. The default is the UTC date.
+   */
+  formatDate?: (d: Date) => string;
 }
 
-/** Tabs that are not item tabs. Anything else in the spreadsheet is a category tab. */
-const NON_ITEM_TABS = ["README", "Template", "Claims", "Bookings", "To do", "Sold"];
+/**
+ * The published tabs, an allow-list (D-030 rule 9): a hidden, copied or new tab
+ * is never published by accident. A new category needs a code change.
+ */
+const ITEM_TABS = ["Tech", "Gym & Sport", "Home Things", "Books"];
 const BOOKS = "Books";
 /** Where the brand (or on Books, the book name) and its rich-text link live. */
 const BRAND_HEADERS = ["Brand (+ Link)", "Brand"];
@@ -48,9 +57,11 @@ const blank = (v: CellValue | undefined): boolean => v === null || v === undefin
 /** Plain text of a cell, or null when blank. */
 const text = (v: CellValue | undefined): string | null => (blank(v) ? null : String(v).trim());
 
-/** A Date becomes an ISO string; text such as "Now" passes through (D-030 rule 6). */
-function dateOrText(v: CellValue | undefined): string | null {
-  if (v instanceof Date) return Number.isNaN(v.getTime()) ? null : v.toISOString();
+const utcDate = (d: Date): string => d.toISOString().slice(0, 10);
+
+/** A valid Date becomes "YYYY-MM-DD"; text such as "Now" passes through; an invalid Date is null (D-030 rule 6). */
+function dateOrText(v: CellValue | undefined, formatDate: (d: Date) => string): string | null {
+  if (v instanceof Date) return Number.isNaN(v.getTime()) ? null : formatDate(v);
   return text(v);
 }
 
@@ -80,7 +91,7 @@ function readClaims(ss: Spreadsheet): ClaimInput[] {
   return out;
 }
 
-function tabItems(tab: Tab, claims: ClaimInput[], photoCounts: Record<string, number>): CatalogueItem[] {
+function tabItems(tab: Tab, claims: ClaimInput[], photoCounts: Record<string, number>, formatDate: (d: Date) => string): CatalogueItem[] {
   const grid = tab.getGrid();
   const hr = findHeaderRow(grid);
   if (hr < 0) return [];
@@ -121,7 +132,7 @@ function tabItems(tab: Tab, claims: ClaimInput[], photoCounts: Record<string, nu
       author: text(cell(cells, authorCol)),
       category: text(cell(cells, categoryCol)),
       price: typeof price === "number" ? price : null,
-      availableFrom: dateOrText(cell(cells, fromCol)),
+      availableFrom: dateOrText(cell(cells, fromCol), formatDate),
       notes: text(cell(cells, notesCol)),
       link: linkCol ? safeLink(links.get(`${r + 1}:${linkCol}`)) : null,
       quantity: q,
@@ -137,9 +148,10 @@ function tabItems(tab: Tab, claims: ClaimInput[], photoCounts: Record<string, nu
 export function catalogue(ss: Spreadsheet, opts: CatalogueOptions = {}): { items: CatalogueItem[] } {
   const claims = readClaims(ss);
   const photoCounts = opts.photoCounts ?? {};
+  const formatDate = opts.formatDate ?? utcDate;
   const items = ss
     .getTabs()
-    .filter((t) => !NON_ITEM_TABS.includes(t.name))
-    .flatMap((t) => tabItems(t, claims, photoCounts));
+    .filter((t) => ITEM_TABS.includes(t.name))
+    .flatMap((t) => tabItems(t, claims, photoCounts, formatDate));
   return { items };
 }
