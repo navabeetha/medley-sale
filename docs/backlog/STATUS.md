@@ -1,18 +1,16 @@
 # Status board
 
-*Maintained by the PM and updated after every story. Last updated: 2026-11-05 (S-04 and S-05 merged; live checks pending).*
+*Maintained by the PM and updated after every story. Last updated: 2026-11-05 (S-05 Done, photos published; S-04 waits on the web-app URL).*
 
 **Scope:** MVP only (brief Section 8), 43 points in 4 slices, worked in order.
-**Now:** S-01, S-02 and S-03 Done. S-04 (catalogue API, [D-030](../decisions/D-030-catalogue-shape.md)) and S-05 (photo pipeline, [D-029](../decisions/D-029-photo-pipeline-edge-cases.md), [D-031](../decisions/D-031-photo-pipeline-hardening.md)) passed QA (several fix rounds, see the qa-log) and are merged to `main` 2026-11-05. **Neither is Done until its live checks pass.** The S-04 script is pushed to the build copy (2026-11-05 17:49).
+**Now:** S-01, S-02, S-03 and S-05 Done. S-04 (catalogue API, [D-030](../decisions/D-030-catalogue-shape.md)) and S-05 (photo pipeline, [D-029](../decisions/D-029-photo-pipeline-edge-cases.md), [D-031](../decisions/D-031-photo-pipeline-hardening.md)) passed QA (several fix rounds, see the qa-log) and are merged to `main` 2026-11-05. **S-04 isn't Done until its live checks pass.** The S-04 script is pushed to the build copy (2026-11-05 17:49).
 
 **Resume here:**
 - **S-04:**
   - Waiting for the seller to deploy the web app (Deploy > New deployment > Web app, Execute as Me, access Anyone) and paste the `/exec` URL.
   - Then the PM runs the live checks in the S-04 QA entries: CORS from the Pages origin (the D-001 go or no-go), cold and warm timings recorded per D-020, dates exactly `2026-12-02`, cache, links.
   - The seller reads the JSON once by eye for real names in Notes (QA F2).
-- **S-05:**
-  - Waiting for the seller's `.xlsx` download of the scrubbed build copy into `private/`.
-  - Then the live checks in the S-05 QA entries: media extensions and AlternateContent count (numbers only), `npm run photos`, the seller's contact-sheet review (upright, right ID, crops, no people, names or addresses), gate on the real output, rerun unchanged.
+- **S-05: Done 2026-11-05.** Real export run: 31 photos for 25 items published to `public/photos/`. Two close-ups were shrunk per [D-032](../decisions/D-032-photo-size-fallback.md), and the seller approved the contact sheet. To refresh photos: the seller re-exports into `private/build-copy.xlsx`, then `npm run photos private/build-copy.xlsx`, then commit and push.
 - **Open S4 follow-ups:** D-028 error wording; 16-bit greyscale; broken rels traceback; Python 3.9 end of life; CLI cwd-relative paths (accepted); migrate's per-row `getGrid` slowness; `doGet` cache/ContentService outside the try; silent `unavailable` errors; F-A to F-D and R2 to R6.
 - **Carry to S-06/S-08:** treat a non-JSON or `{"error"}` response as "API down"; the photo count comes from `public/photos/manifest.json` (D-030 rule 3); lazy loading. **S-11, S-14 and S-15** must clear `CATALOGUE_CACHE_KEY`.
 
@@ -33,23 +31,22 @@ G0 is staged per [D-018](../decisions/D-018-g0-in-stages.md). Steps: [docs/runbo
 ## Waiting on the seller
 
 1. Nothing blocking. Review the proposed decisions D-016 to D-023 and D-026 to D-028 when convenient. They stand as proposed meanwhile.
-2. (When S-05 starts) export the scrubbed build copy as `.xlsx` into `private/`.
 
 ## Board
 
 | Backlog | Ready | In progress | In QA | Done |
 |---|---|---|---|---|
-| S-06 to S-18 | none | none | S-04, S-05 (merged; live checks pending) | S-01, S-02, S-03 |
+| S-06 to S-18 | none | none | S-04 (merged; live checks pending) | S-01, S-02, S-03, S-05 |
 
 ## Slices
 
 | Slice | Stories | Pts | Done pts | Exit | Status |
 |---|---|---|---|---|---|
-| 1. See the sale | S-01 to S-08 | 20 | 10 | Catalogue live, and D-001 proven | In progress |
+| 1. See the sale | S-01 to S-08 | 20 | 12 | Catalogue live, and D-001 proven | In progress |
 | 2. Reserve | S-09 to S-13 | 11 | 0 | Reserve through to the WhatsApp URL | Not started |
 | 3. Back out and sell | S-14 to S-16 | 8 | 0 | Full loop on staging, then G1 | Not started |
 | 4. Release | S-17, S-18 | 4 | 0 | Link ready for the group (G2) | Not started |
-| **Total** | | **43** | **10** | | |
+| **Total** | | **43** | **12** | | |
 
 ## Stories
 
@@ -59,7 +56,7 @@ G0 is staged per [D-018](../decisions/D-018-g0-in-stages.md). Steps: [docs/runbo
 | [S-02](stories/S-02-queue-engine.md) | Queue engine with quantity | 5 | 1 | S-01 | Done (QA signed off) | |
 | [S-03](stories/S-03-sheet-schema-migration.md) | Sheet schema and migration | 3 | 1 | S-01 | Done (QA signed off; live checks passed 2026-11-05) | G0.3 done |
 | [S-04](stories/S-04-catalogue-api.md) | Catalogue API | 2 | 1 | S-02, S-03 | In QA: merged, live checks pending | D-001 go or no-go |
-| [S-05](stories/S-05-photo-pipeline.md) | Photo pipeline | 2 | 1 | S-03 | In QA: merged, live run pending | Export after G0.3 |
+| [S-05](stories/S-05-photo-pipeline.md) | Photo pipeline | 2 | 1 | S-03 | Done (live run and seller review passed 2026-11-05) | Export done |
 | [S-06](stories/S-06-catalogue-screen.md) | Catalogue screen | 3 | 1 | S-04 | Backlog | |
 | [S-07](stories/S-07-filter-search.md) | Filter and search | 1 | 1 | S-06 | Backlog | |
 | [S-08](stories/S-08-item-view.md) | Item view | 2 | 1 | S-05, S-06 | Backlog | |

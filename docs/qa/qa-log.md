@@ -1051,3 +1051,14 @@ As in the earlier S-05 entries: report the media extensions and the `AlternateCo
 **Not verified:** real photo output (public/photos/ untouched and unread, as instructed); how sharp the shrunk photos look on a phone, which needs the seller's visual review; CI.
 
 **Verdict:** passes QA.
+
+## 2026-11-05: S-05 live run on the seller's export (PM, live check)
+
+Export of the scrubbed build copy in `private/build-copy.xlsx` (gitignored, D-019).
+
+- **Media:** 31 `jpg`, no `AlternateContent`, no `absoluteAnchor`, no `xl/richData/`. QA findings 1, 2, 3 and the S3 AlternateContent issue can't occur on this file.
+- **First run:** stopped at photo 1 of `I-0020` ("does not fit 120 KB even at quality 30"), writing nothing. Two detailed close-ups were 150 KB and 136 KB at 1000 px and q30. Fixed as D-032 (shrink in 10% steps, down to 600 px); QA passed it (entry above).
+- **Second run:** 31 photos for 25 items, 0 skipped, 0 unplaced. `I-0020` came out 810×780 (119 KB) and `I-0021` 740×810 (115 KB). The largest full image is 119 KB and the largest thumbnail 6 KB. No output file has EXIF, XMP or ICC. `npm run size` passes, and `npm run pii` finds 0.
+- **Rerun:** byte-identical output.
+- **Seller's contact-sheet review:** "all the products upright, in center and under their IDs. No faces." She's relaxed about incidental details in her photos (memory: privacy level). Buyer data rules are unchanged.
+- **Open:** the two shrunk photos haven't been viewed on a phone yet (to be seen at G1 on staging).
