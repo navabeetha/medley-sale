@@ -73,7 +73,7 @@ test.describe("F1: the manifest never blocks the list", () => {
     await expect(rows(page)).toHaveCount(ITEMS.length, { timeout: 1_000 });
   });
 
-  const badManifests: [string, (page: Page) => Promise<void>][] = [
+  const badManifests: [string, (page: Page) => Promise<unknown>][] = [
     ["a 404", (p) => p.route("**/photos/manifest.json", (r) => r.fulfill({ status: 404, body: "nope" }))],
     ["junk that is not JSON", (p) => p.route("**/photos/manifest.json", (r) => r.fulfill({ status: 200, contentType: "application/json", body: "{not json" }))],
     ["JSON null", (p) => p.route("**/photos/manifest.json", (r) => r.fulfill({ status: 200, contentType: "application/json", body: "null" }))],
