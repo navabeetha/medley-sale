@@ -5,7 +5,7 @@
 | **Points** | 3 |
 | **Slice** | 1: See the sale |
 | **Depends on** | S-01 |
-| **Status** | Backlog |
+| **Status** | Done (2026-11-05: QA signed off incl. D-027 and D-028; G0.3 and post-migrate live checks passed) |
 | **Pod type** | feature |
 | **Gate** | **G0.2** before anything runs on the build copy. **G0.3** (The seller's scrub check) before anything except `scrubStaging()` touches it ([D-018](../../decisions/D-018-g0-in-stages.md)) |
 | **Branch** | `S-03-sheet-schema-migration` |
