@@ -248,10 +248,12 @@ describe("scrub: fail loud (B4)", () => {
     expect(res.tabsWithoutPerson).not.toContain("Tech");
   });
 
-  it("names a tab that has a title row above its headers", () => {
+  it("does not name a tab with a title row above its headers, and replaces its Person (D-027 rule 1)", () => {
     const ss = buildStaging();
     ss.withTab("Toys", [["Toys for sale"], [...ITEM_HEADERS], itemRow("Train", "Reserved", "Ravi Samplename")]);
-    expect(scrubStaging(ss).tabsWithoutPerson).toContain("Toys");
+    expect(scrubStaging(ss).tabsWithoutPerson).not.toContain("Toys");
+    const personCol = ITEM_HEADERS.indexOf("Person");
+    expect(String(ss.getTab("Toys")!.getGrid()[2]![personCol])).toMatch(/^Test Person \d+$/);
   });
 
   it("does not name a tab that has no data rows", () => {

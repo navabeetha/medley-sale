@@ -299,7 +299,8 @@ describe("migrate on a scrubbed copy with the header on row 2", () => {
     }
     expect(new Set(ids).size).toBe(ids.length);
     expect(res.idsAssigned).toBe(ids.length);
-    expect(res.quantitiesSet).toBe(ids.length);
+    // +1: Template's example row also gets Quantity 1 (same count as migrate.test.ts: 11 + 1).
+    expect(res.quantitiesSet).toBe(ids.length + 1);
   });
 
   it("does not grow the grid with phantom rows (title rows keep their width)", () => {
