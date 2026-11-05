@@ -6,7 +6,9 @@
 **Now:** S-01, S-02, S-03 and S-05 Done. S-04 (catalogue API, [D-030](../decisions/D-030-catalogue-shape.md)) and S-05 (photo pipeline, [D-029](../decisions/D-029-photo-pipeline-edge-cases.md), [D-031](../decisions/D-031-photo-pipeline-hardening.md)) passed QA (several fix rounds, see the qa-log) and are merged to `main` 2026-11-05. **S-04 isn't Done until its live checks pass.** The S-04 script is pushed to the build copy (2026-11-05 17:49).
 
 **Release R1, browse-only, target evening of 2026-11-06 ([D-034](../decisions/D-034-browse-only-first-release.md), [D-035](../decisions/D-035-browse-only-on-real-sheet.md)).** The seller chose: Slice 1 only (S-06, S-07, S-08), "Message to reserve" by WhatsApp, the catalogue kept warm every 5 minutes, reading her **real sheet** (ID and Quantity columns only, status mode without Claims). She'll decide afterwards whether to wait for online reserving before posting widely.
-- **Building in parallel:** S-06 catalogue screen (branch `S-06-catalogue-screen`); R1 backend (branch `R1-browse-release-api`) with status mode, `contactUrl`, `addIdColumns` and `warmCatalogue`.
+- **Scope cut (seller, 2026-11-05):** R1 is the S-06 list of cards only. S-07 (filter and search) and S-08 (item view) move to the next slice. Partial S-07 red tests are parked, unverified, on branch `S-07-filter-search`.
+- **Merged to main, local and unpushed:** the R1 backend (D-034, D-035, D-036; QA pass) and S-06 with F1 to F9 fixed (QA pass). The gate is green with blocked words: 743 unit, 352 e2e, 3.4 KB. **Don't push until the real-sheet API URL is set**, because a push deploys Pages, and today `API_URL` points at staging.
+- **Seller confirmed copy:** "All prices negotiable.", "Books: Free for libraries and students.", and the reserve message "Hi! I'd like to reserve: <name>".
 - **Seller's steps tomorrow** (about 15 minutes, 11.7 format):
   - back up the real sheet;
   - give the script ID;
@@ -21,14 +23,25 @@
   - CORS from Pages;
   - timings.
 
-**Resume here:**
-- **S-04:**
-  - Waiting for the seller to deploy the web app (Deploy > New deployment > Web app, Execute as Me, access Anyone) and paste the `/exec` URL.
-  - Then the PM runs the live checks in the S-04 QA entries: CORS from the Pages origin (the D-001 go or no-go), cold and warm timings recorded per D-020, dates exactly `2026-12-02`, cache, links.
-  - The seller reads the JSON once by eye for real names in Notes (QA F2).
-- **S-05: Done 2026-11-05.** Real export run: 31 photos for 25 items published to `public/photos/`. Two close-ups were shrunk per [D-032](../decisions/D-032-photo-size-fallback.md), and the seller approved the contact sheet. To refresh photos: the seller re-exports into `private/build-copy.xlsx`, then `npm run photos private/build-copy.xlsx`, then commit and push.
-- **Open S4 follow-ups:** D-028 error wording; 16-bit greyscale; broken rels traceback; Python 3.9 end of life; CLI cwd-relative paths (accepted); migrate's per-row `getGrid` slowness; `doGet` cache/ContentService outside the try; silent `unavailable` errors; F-A to F-D and R2 to R6.
-- **Carry to S-06/S-08:** treat a non-JSON or `{"error"}` response as "API down"; the photo count comes from `public/photos/manifest.json` (D-030 rule 3); lazy loading. **S-11, S-14 and S-15** must clear `CATALOGUE_CACHE_KEY`.
+**Resume here (2026-11-06 morning, R1 release day):**
+1. **Seller real-sheet setup**, one 11.7 step at a time (about 15 to 20 minutes):
+   - backup copy;
+   - the real sheet's script ID, into a separate untracked clasp config, never committed;
+   - the PM pushes the bundle;
+   - the seller runs `addIdColumns` (approve permissions once) and pastes the counts;
+   - Script Property `SELLER_WHATSAPP` (91 plus 10 digits, D-036);
+   - a 5-minute time trigger on `warmCatalogue`;
+   - deploy the web app (Execute as Me, Anyone) and send the `/exec` URL;
+   - read Notes and links once for names or numbers.
+2. **PM checks** (30 to 45 minutes):
+   - names per ID against staging for **every** ID (photos are named by build-copy ID; QA R1 finding 4);
+   - a T-12 scan of the live JSON;
+   - `contactUrl` is `wa.me/91` plus 10 digits;
+   - CORS and timings with the warm job on;
+   - set `API_URL` in `src/site/config.ts`, run the gate, push, and check the Pages deploy.
+3. **Seller phone check:** the list loads; "Message to reserve" prefills correctly (don't send); a second visit is instant.
+4. **Then:** mark S-04 and S-06 Done and update the burn-up. Plan the next slice (S-07, S-08, or online reserving), as the seller decides.
+- **Open S4 follow-ups:** D-028 error wording; 16-bit greyscale; broken rels traceback; Python 3.9 end of life; migrate's per-row `getGrid` slowness; `doGet` cache/ContentService outside the try; silent `unavailable` errors; F-A to F-D and R2 to R6. From the R1 QA: the bundle and scope are now pinned (D-036).
 
 **Live headings (Books row 2):** Author, Brand (+ Link), Available from, Status, Price, Photos, (blank), (blank), Notes, Person.
 
@@ -73,9 +86,9 @@ G0 is staged per [D-018](../decisions/D-018-g0-in-stages.md). Steps: [docs/runbo
 | [S-03](stories/S-03-sheet-schema-migration.md) | Sheet schema and migration | 3 | 1 | S-01 | Done (QA signed off; live checks passed 2026-11-05) | G0.3 done |
 | [S-04](stories/S-04-catalogue-api.md) | Catalogue API | 2 | 1 | S-02, S-03 | In QA: merged, live checks pending | D-001 go or no-go |
 | [S-05](stories/S-05-photo-pipeline.md) | Photo pipeline | 2 | 1 | S-03 | Done (live run and seller review passed 2026-11-05) | Export done |
-| [S-06](stories/S-06-catalogue-screen.md) | Catalogue screen | 3 | 1 | S-04 | Backlog | |
-| [S-07](stories/S-07-filter-search.md) | Filter and search | 1 | 1 | S-06 | Backlog | |
-| [S-08](stories/S-08-item-view.md) | Item view | 2 | 1 | S-05, S-06 | Backlog | |
+| [S-06](stories/S-06-catalogue-screen.md) | Catalogue screen | 3 | 1 | S-04 | In QA: QA passed and merged; live phone check pending | |
+| [S-07](stories/S-07-filter-search.md) | Filter and search | 1 | next | S-06 | Backlog (moved after R1) | |
+| [S-08](stories/S-08-item-view.md) | Item view | 2 | next | S-05, S-06 | Backlog (moved after R1) | |
 | [S-09](stories/S-09-basket.md) | Basket | 2 | 2 | S-06 | Backlog | |
 | [S-10](stories/S-10-reservation-form.md) | Reservation form | 2 | 2 | S-09 | Backlog | |
 | [S-11](stories/S-11-reserve-api.md) | Reserve API | 3 | 2 | S-02, S-03 | Backlog | |
