@@ -6,7 +6,7 @@
 ## Decisions
 
 1. **Status matching ignores case and surrounding spaces.** `Available`, `available` and `Available ` all count as Available, and the same goes for Reserved. Anything else, including Sold and blank, stays hidden, as D-035 says.
-2. **`SELLER_WHATSAPP` must include the country code.** Spaces, `+`, `-` and brackets are stripped. The remaining digits are accepted only if they are 11 to 15 digits long, don't start with 0, and nothing else was in the value. Anything else gives `contactUrl: null`, so the site shows no reserve link rather than a wrong one. The runbook says "with country code, e.g. 91 then your 10 digits".
+2. **`SELLER_WHATSAPP` must include the country code.** Spaces, `+`, `-` and brackets are stripped. The remaining digits are accepted only if they are 11 to 15 digits long, don't start with 0, and nothing else was in the value. A leading `00` (international dialling prefix) is dropped first. A number starting `91` (India) must be exactly 12 digits, with the digit after 91 from 6 to 9; this rejects `+91 0…` with a stray trunk 0. Anything else gives `contactUrl: null`, so the site shows no reserve link rather than a wrong one. The runbook says "with country code, e.g. 91 then your 10 digits".
 3. **`addIdColumns` checks all four tabs before it writes anything** (so a run never half-numbers the sheet), and tests pin this.
 4. **Items added after setup need `addIdColumns` run again.** This is a runbook note; a second run fills only rows that have no ID.
 5. **Engine-mode tests keep a Claims tab** (an empty one where needed), so they don't silently pass in status mode.
