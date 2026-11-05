@@ -97,17 +97,59 @@ describe("contactUrl needs a country code (D-036.2)", () => {
     expect(url(919000000001)).toBeNull();
   });
 
-  // Boundaries of the 11 to 15 digit rule.
-  it("accepts 11 digits and 15 digits, rejects 10 and 16", () => {
-    expect(url("91900000001")).toBe("https://wa.me/91900000001"); // 11
-    expect(url("919000000001234")).toBe("https://wa.me/919000000001234"); // 15
-    // Built by concatenation: the PII scan only accepts 90000 000xx-shaped literals.
-    expect(url("91" + "90000001")).toBeNull(); // 10
-    expect(url("9190000000012345")).toBeNull(); // 16
+  // Boundaries of the generic 11 to 15 digit rule, on a non-91 code (91 numbers
+  // have their own exact-12-digit rule, tested below). 44 is the UK code; the
+  // rest of each number is invented.
+  it("accepts 11 and 15 digits and rejects 10 and 16 for a non-91 country code", () => {
+    expect(url("44" + "700000001")).toBe("https://wa.me/44700000001"); // 11
+    expect(url("44" + "7000000012345")).toBe("https://wa.me/447000000012345"); // 15
+    expect(url("44" + "70000001")).toBeNull(); // 10
+    expect(url("44" + "70000000123456")).toBeNull(); // 16
   });
 
   it("gives the same answer twice", () => {
     const ss = sheetWithStatuses(["Available"]);
     expect(run(ss, { sellerWhatsapp: "+91 90000 00001" })).toEqual(run(ss, { sellerWhatsapp: "+91 90000 00001" }));
+  });
+});
+
+// D-036.2 clarification (e873599): a leading 00 is dropped first; a number that
+// starts with 91 must be exactly 12 digits with the digit after 91 in 6 to 9.
+describe("contactUrl: 00 prefix and the India (+91) rule (D-036.2)", () => {
+  const url = (raw: string): string | null =>
+    run(sheetWithStatuses(["Available"]), { sellerWhatsapp: raw }).contactUrl;
+
+  it("drops a leading 00 international prefix", () => {
+    expect(url("00" + "919000000001")).toBe("https://wa.me/919000000001");
+    expect(url("00 91 90000 00001")).toBe("https://wa.me/919000000001");
+  });
+
+  it("rejects +91 followed by a stray trunk 0 (13 digits)", () => {
+    expect(url("+91 0" + "9000000001")).toBeNull();
+  });
+
+  it.each(["5", "0", "1"])("rejects a 91 number whose next digit is %s (not 6 to 9)", (d) => {
+    expect(url("91" + d + "000000001")).toBeNull();
+  });
+
+  it.each(["6", "7", "8", "9"])("accepts a 91 number whose next digit is %s", (d) => {
+    expect(url("91" + d + "000000001")).toBe(`https://wa.me/91${d}000000001`);
+  });
+
+  it("rejects a 91 number that is not exactly 12 digits, even inside 11 to 15", () => {
+    expect(url("91" + "900000001")).toBeNull(); // 11 digits
+    expect(url("91" + "90000000012")).toBeNull(); // 13 digits
+    expect(url("91" + "9000000001234")).toBeNull(); // 15 digits
+  });
+
+  it("still passes a non-91 international number through the generic 11 to 15 rule", () => {
+    // Built by concatenation: the PII scan only accepts 90000 000xx-shaped literals.
+    const national = ["700", "000", "0001"]; // invented UK-style digits, joined below
+    expect(url(`44${national.join("")}`)).toBe(`https://wa.me/44${national.join("")}`);
+    expect(url(`+44 ${national.join(" ")}`)).toBe(`https://wa.me/44${national.join("")}`);
+  });
+
+  it("rejects 00 followed by something that is then not valid", () => {
+    expect(url("00" + "9000000001")).toBeNull(); // 10 digits after the prefix
   });
 });
