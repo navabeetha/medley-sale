@@ -10,5 +10,5 @@
 3. **Empty export guard:** if a run finds zero images while `public/photos/manifest.json` already lists items, it stops and changes nothing, unless explicitly allowed (`allow_empty`).
 4. **Budgets are hard:** quality steps down to a floor of 30. If a file still doesn't fit, the run stops and names the item ID; it never writes an over-budget file.
 5. **Alt text fallback** to `Brand (+ Link)` / `Brand` is for Books only (D-028 rule 3). On other tabs with no `Item`, the alt text is the ID.
-6. **CI:** the Python tests run in CI as their own step (setup-python 3.9, pinned requirements). They stay out of `npm run check`, so a local venv isn't required to run the gate.
+6. **CI:** the Python tests run in CI as their own step (setup-python 3.12, pinned requirements; the GitHub runner no longer offers 3.9, and local runs stay on the Xcode Python 3.9). They stay out of `npm run check`, so a local venv isn't required to run the gate.
 7. **Seller's review:** the contact sheet is also checked for faces, name labels, addresses and receipts, not only crops (no automated content check).
