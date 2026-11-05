@@ -10,7 +10,7 @@
 3. **A new editor function, `addIdColumns`, does the setup:**
    - It adds `ID` and `Quantity` headers at the far right of each item tab's header row (D-027).
    - It fills IDs in tab, then row, order using the same `I-NNNN` scheme as `migrate`, so they match the build copy's IDs and the published photos. Blank quantities get 1.
-   - It's idempotent, and it never reads or writes `Person`.
+   - It's idempotent. It reads `Person` only to tell whether a row is blank, and never writes or outputs it (D-036).
    - The PM verifies the match by comparing item names per ID between the staging and real catalogues before the link is shared.
 4. **Script Property `SELLER_WHATSAPP`** is set by the seller. The catalogue returns `contactUrl` = `https://wa.me/<digits>`.
 5. **Warm job:** a time-driven trigger (every 5 minutes) on `warmCatalogue`, installed by the seller in the Triggers screen (D-034).

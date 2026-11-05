@@ -1062,3 +1062,68 @@ Export of the scrubbed build copy in `private/build-copy.xlsx` (gitignored, D-01
 - **Rerun:** byte-identical output.
 - **Seller's contact-sheet review:** "all the products upright, in center and under their IDs. No faces." She's relaxed about incidental details in her photos (memory: privacy level). Buyer data rules are unchanged.
 - **Open:** the two shrunk photos haven't been viewed on a phone yet (to be seen at G1 on staging).
+
+## 2026-11-05: R1 browse-only release backend (D-034, D-035), QA
+
+**Change:** branch `R1-browse-release-api`, commits 42609b3 (red tests), df0f2c6 (implementation), f8bad4e (empty Claims tab in `catalogue-qa.test.ts` fixtures so those tests stay in engine mode). Status mode in `src/api/catalogue.ts` (no Claims tab: Status decides), top-level `contactUrl` from Script Property `SELLER_WHATSAPP`, new `addIdColumns` (`src/api/add-id-columns.ts`), new `warmCatalogue` (`src/api/warm-catalogue.ts`), cache 30 s to 600 s, helpers exported from `migrate.ts`, two new top-level wrappers in `tools/build-gas.mjs`.
+
+**Verified:**
+- Gate, fresh run at f8bad4e: `npm run check` green: 563 unit, 16 e2e, 0.7 KB gz, pii-scan 188 files 0 findings. Note: run without blocked words configured, so the pii scan is the weak local form (the pre-push hook enforces the strict one).
+- Tests came first: 42609b3 holds only tests, then df0f2c6 the implementation.
+- Diff: no debug leftovers, no secrets, no sheet IDs, no new dependency. Only synthetic `+91 90000 000xx` numbers. `console.log` appears only in the Apps Script wrappers, and it logs counts.
+- Built bundle (`node tools/build-gas.mjs`; `dist/` is gitignored): the top-level functions are exactly `scrubStaging`, `migrateSheet`, `addIdColumns`, `warmCatalogue` and `doGet`, plus the `var A44` namespace. `oauthScopes` is only `spreadsheets.currentonly`.
+- Warm job: it writes `CATALOGUE_CACHE_KEY` ("catalogue"), the same constant `handleGet` reads. `doGet` and the warm job share one `buildCatalogue()`. A failed build or a failed put leaves the previous body in place and doesn't throw; covered by tests.
+- Scratch probes (synthetic, deleted afterwards):
+  - Status is an exact match. Only `Available` and `Reserved` are listed. `available`, `AVAILABLE`, `Available `, ` Available`, `Reserved `, `reserved`, `Sold ` and `sold` are all hidden.
+  - In status mode, Quantity blank, `""`, `"2"`, `"abc"`, 0, -1, 1.5 and `true` all hide the row. Only a positive whole number is listed.
+  - `addIdColumns`:
+    - It throws on a missing tab, and on a tab with no header in the top 5 rows. When it throws, the sheet is byte-identical (nothing written).
+    - A row with an unknown Status still gets an ID. So does a row holding only a Person value.
+    - A second run gives zeros and an identical snapshot.
+  - T-12-style check on an unscrubbed, real-shaped fixture after `addIdColumns`, in status mode: 6 Person values (including a formula), 0 found in the JSON.
+- Mutation checks, one at a time, restored with `git checkout -- src`:
+  - Dropping `calc.unavailable` in engine mode: caught (1 test).
+  - Dropping the status-mode Quantity check: caught (5 tests).
+  - **Survived:** case-folding or trimming Status; removing `addIdColumns`' all-tabs pre-check; narrowing contactUrl to 10-15 digits; skipping Person-only rows in `addIdColumns`.
+
+**Findings (worst first):**
+1. **S3: `contactUrl` accepts a number with no country code** (`catalogue.ts`, `contactUrl()`, `/^\d{8,15}$/`).
+   - Repro: `catalogue(ss, { sellerWhatsapp: "9000000001" }).contactUrl` gives `https://wa.me/9000000001`, which WhatsApp reads as country code 90.
+   - A national number with its leading 0 kept is published with the 0. A +91 number written with the trunk 0 keeps the 0 after 91 (13 digits). Text such as "ext 2" after the number has its digits joined on. All three are dead links. Repro: the synthetic fixture number in those three forms.
+   - If the seller enters her 10-digit number without 91, every "Message to reserve" goes to a dead number or to a stranger abroad. That would be an S2 in practice. It's rated S3 because it only happens at setup, and correct entry plus manual check 2 below avoids it.
+   - No test covers 8 to 10 digits or a leading 0. Suggest: require 11 to 15 digits and reject a leading 0, and say "with country code" in the runbook.
+2. **S3: Status matching is exact, silently, and not pinned.** A trailing space or a lowercase "available" typed into the real sheet hides the item, with no log or count. Fail-closed matches D-035's table, so this is not a privacy issue. But nothing tells the seller an item vanished, and no test pins the choice either way (the case-fold mutant survives). PM to decide whether to trim whitespace; then pin it with a test.
+3. **S3: `addIdColumns`' atomic pre-check is unpinned.**
+   - The code is correct (probe above). But deleting the "check all four tabs first" loop leaves every test green.
+   - Without that loop, a tab with no header crashes mid-run after earlier tabs got headers: a half-numbered real sheet.
+   - No test covers the missing-tab or no-header throw.
+4. **S3 (risk): IDs match the build copy only if both sheets have the same item rows and tabs.**
+   - Probe: one extra row in Tech shifts every later ID. An extra item tab in the build copy outside the four allow-listed tabs (migrate numbers it, `addIdColumns` doesn't) shifts every ID (staged first Tech ID `I-0002` against real `I-0001`).
+   - Published photos are named by build-copy ID.
+   - D-035's PM name-per-ID comparison is the only safeguard. It must cover every ID, not a sample.
+5. **S3: items the seller adds after setup get no ID, so they never appear** until she reruns `addIdColumns`. This isn't in the runbook.
+6. **S4: an unusable Quantity hides the row in status mode** (blank, text, 0, negative, fraction). This is consistent with D-026 and engine mode, and setup fills blanks with 1. A quantity cleared later hides the item silently. Text quantity isn't tested in status mode (null, 0, 1.5 and -2 are). QA would keep the behaviour; PM to confirm.
+7. **S4: engine-mode coverage drift.**
+   - `catalogue.test.ts` `build()` has no Claims tab. Its no-claims, field and quantity-0/1.5 tests now run in status mode and pass for a different reason.
+   - Engine D-026 exclusion is still caught, but by only one test (in `catalogue-qa.test.ts`).
+   - Suggest an empty Claims tab in `build()` as in f8bad4e.
+8. **S4: nothing pins the bundle footer or the OAuth scope.** Checked by hand this time.
+9. **S4: `addIdColumns` reads Person cells for blankness** (Person-only rows get an ID), which is what migrate does. D-035 says "never reads Person". It never emits or writes Person; the wording should be tightened.
+
+**No regression found in engine mode.** The full suite passes. With a Claims tab, Status is ignored as before (tests in `catalogue-status-mode.test.ts`). No Person value leaks in either mode.
+
+**Manual checks still required (live, not in CI):**
+1. Install the 5-minute trigger on `warmCatalogue`.
+   - Executions screen: runs succeed, log "cache refreshed", no auth prompt beyond the current scope.
+   - Then time a few GETs: about 2 s.
+2. After `SELLER_WHATSAPP` is set, fetch `?action=catalogue`. `contactUrl` must be `https://wa.me/91` followed by 10 digits. The seller compares it with her number by eye. Nobody sends a message.
+3. With the property deleted: `contactUrl` is `null` and the response is otherwise normal.
+4. On the real sheet (backup first), run `addIdColumns`.
+   - The log shows counts only. A second run logs zeros.
+   - The PM compares name per ID against staging for **every** ID.
+5. The seller reads the real sheet's Notes column and the brand/book-name links for buyer names or numbers. These cells are published verbatim, and the real sheet was never scrubbed. The probe confirmed that a phone-like Notes string reaches the JSON.
+6. The seller checks that the number of Available plus Reserved rows equals the item count in the response (this catches finding 2).
+
+**Not examined:** the site (no site code in this change), the real sheet and its data (rule 4), live Apps Script behaviour (triggers, CacheService 100 KB value limit, Script Properties), CI.
+
+**Verdict:** passes QA. No S1 or S2 found. Before the link is shared, close findings 1 and 5 (runbook or code) and do manual checks 2, 4 and 5.

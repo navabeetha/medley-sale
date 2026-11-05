@@ -13,6 +13,20 @@ type Item = Record<string, unknown> & { id: string; name: string; tab: string };
 const run = (ss: FakeSpreadsheet, opts?: Opts): Item[] =>
   (catalogue(ss, opts as never) as unknown as { items: Item[] }).items;
 
+
+const CLAIM_HEADERS = ["Claim ID", "Booking ID", "Item ID", "State"];
+/**
+ * These QA tests are about behaviour that does not depend on the mode (dates,
+ * allow-list, gaps) and were written for the queue engine. Without a Claims tab
+ * the catalogue is in status mode (D-035) and would hide rows with no Status, so
+ * the fixtures get an empty Claims tab to stay in engine mode.
+ */
+const engineSheet = (): FakeSpreadsheet => {
+  const ss = new FakeSpreadsheet("Synthetic sale");
+  ss.withTab("Claims", [[...CLAIM_HEADERS]]);
+  return ss;
+};
+
 const HEADERS = ["Item", "Brand", "Price", "Available from", "Status", "Person", "Notes", "ID", "Quantity"];
 
 /** Rows go in under `headers`, with `above` filler rows over the header row. */
@@ -40,13 +54,19 @@ const istFormat = (d: Date): string => new Date(d.getTime() + 5.5 * 3600_000).to
 
 describe("catalogue dates: calendar date in the spreadsheet's time zone (QA F1)", () => {
   const withDate = (v: CellValue) => {
-    const ss = new FakeSpreadsheet("Synthetic sale");
+    const ss = engineSheet();
     tab(ss, "Tech", [one("I-0001", "Echo Dot", { "Available from": v })]);
     return ss;
   };
 
   it("gives exactly 2026-12-02 for IST midnight when the IST formatter is injected", () => {
     expect(run(withDate(IST_MIDNIGHT), { formatDate: istFormat })[0]!.availableFrom).toBe("2026-12-02");
+  });
+
+  it("gives the same 2026-12-02 in status mode (no Claims tab, Status Available)", () => {
+    const ss = new FakeSpreadsheet("Synthetic sale");
+    tab(ss, "Tech", [one("I-0001", "Echo Dot", { "Available from": IST_MIDNIGHT, Status: "Available" })]);
+    expect(run(ss, { formatDate: istFormat })[0]!.availableFrom).toBe("2026-12-02");
   });
 
   it("passes the date cell's instant to the injected formatter", () => {
@@ -93,7 +113,7 @@ describe("catalogue dates: calendar date in the spreadsheet's time zone (QA F1)"
 
 describe("catalogue tab allow-list (QA F4)", () => {
   const sheet = () => {
-    const ss = new FakeSpreadsheet("Synthetic sale");
+    const ss = engineSheet();
     tab(ss, "Tech", [one("I-0001", "Echo Dot")]);
     tab(ss, "Gym & Sport", [one("I-0002", "Yoga mat")]);
     tab(ss, "Home Things", [one("I-0003", "Picture frame")]);
@@ -120,28 +140,28 @@ describe("catalogue edge cases (QA F5)", () => {
   const link = (ss: FakeSpreadsheet, t: FakeTab, url: string) => { void ss; t.setLink(3, 2, url); };
 
   it("uses the first http(s) link when a cell carries several", () => {
-    const ss = new FakeSpreadsheet("Synthetic sale");
+    const ss = engineSheet();
     const t = tab(ss, "Tech", [one("I-0001", "Echo Dot")]);
     link(ss, t, "https://example.invalid/a https://example.invalid/b");
     expect(run(ss)[0]!.link).toBe("https://example.invalid/a");
   });
 
   it("gives null when the first of several links is not http(s)", () => {
-    const ss = new FakeSpreadsheet("Synthetic sale");
+    const ss = engineSheet();
     const t = tab(ss, "Tech", [one("I-0001", "Echo Dot")]);
     link(ss, t, "javascript:alert(1) https://example.invalid/b");
     expect(run(ss)[0]!.link).toBeNull();
   });
 
   it.each([1, 3])("reads a tab whose header is on row %i", (headerRow) => {
-    const ss = new FakeSpreadsheet("Synthetic sale");
+    const ss = engineSheet();
     tab(ss, "Tech", [one("I-0001", "Echo Dot", { Price: 2500 })], { above: headerRow - 1 });
     expect(run(ss)).toHaveLength(1);
     expect(run(ss)[0]).toMatchObject({ name: "Echo Dot", price: 2500 });
   });
 
   it("finds headers with stray spaces around them", () => {
-    const ss = new FakeSpreadsheet("Synthetic sale");
+    const ss = engineSheet();
     tab(ss, "Tech", [one("I-0001", "Echo Dot", { Price: 2500, Notes: "ok" })], {
       headers: HEADERS.map((h) => ` ${h} `),
     });
@@ -149,13 +169,13 @@ describe("catalogue edge cases (QA F5)", () => {
   });
 
   it.each(["100 rs", "Ask", "1,000"])("gives a null price for the text %j", (text) => {
-    const ss = new FakeSpreadsheet("Synthetic sale");
+    const ss = engineSheet();
     tab(ss, "Tech", [one("I-0001", "Echo Dot", { Price: text })]);
     expect(run(ss)[0]!.price).toBeNull();
   });
 
   it("hides an item whose Quantity is text, even a numeric-looking one (Quantity must be a number)", () => {
-    const ss = new FakeSpreadsheet("Synthetic sale");
+    const ss = engineSheet();
     tab(ss, "Tech", [one("I-0001", "Echo Dot", { Quantity: "2" })]);
     expect(run(ss)).toEqual([]);
   });

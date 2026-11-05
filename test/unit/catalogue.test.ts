@@ -81,7 +81,8 @@ function addBooking(ss: FakeSpreadsheet, tag: number) {
     "2026-11-01T10:00:00.000Z", `idem-${tag}-xyz`, null]);
 }
 
-/** One of everything, all four tabs. */
+/** One of everything, all four tabs, plus an empty Claims tab (engine mode). The tab has the full header
+ * row (which includes Claim ID, Booking ID, Item ID and State) so addClaim()'s rows line up. */
 function build(brandHeader = "Brand"): FakeSpreadsheet {
   const ss = new FakeSpreadsheet("Synthetic sale");
   const headers = ITEM_HEADERS.map((h) => (h === "Brand" ? brandHeader : h));
@@ -101,6 +102,10 @@ function build(brandHeader = "Brand"): FakeSpreadsheet {
   ]);
   books.setLink(3, 2, "https://example.invalid/atlas");
   addTab(ss, "Template", headers, [row("", "Example item")]);
+  // D-036.5: an empty Claims tab with the standard headers keeps these tests in
+  // engine mode. With no Claims tab the catalogue switches to status mode (D-035)
+  // and these tests would pass for a different reason.
+  ss.withTab("Claims", [[...CLAIM_HEADERS]]);
   return ss;
 }
 
@@ -215,7 +220,9 @@ describe("catalogue: columns are found by name, not position", () => {
   it("finds Claims columns by header too (State and Item ID swapped)", () => {
     const ss = build();
     const swap = (r: CellValue[]) => { const c = [...r]; [c[2], c[6]] = [c[6]!, c[2]!]; return c; };
-    const claims = ss.withTab("Claims", [swap(CLAIM_HEADERS)]);
+    // build() already has an empty Claims tab; give it the swapped header row.
+    const claims = ss.getTab("Claims") as FakeTab;
+    claims.grid = [swap(CLAIM_HEADERS)];
     claims.appendRow(swap([1, "BK-ZQ1", "I-0001", "x", "Zed Buyer1", "n", "sold", "t", null, null, null, null, null, null]));
     expect(items(ss).map((i) => i.name)).not.toContain("Echo Dot");
   });
