@@ -1,11 +1,11 @@
 # Status board
 
-*Maintained by the PM and updated after every story. Last updated: 2026-11-05 (G0.3 done; waiting for the seller to run `migrateSheet`).*
+*Maintained by the PM and updated after every story. Last updated: 2026-11-05 (D-028 pushed; waiting for the seller to re-run `migrateSheet`).*
 
 **Scope:** MVP only (brief Section 8), 43 points in 4 slices, worked in order.
 **Now:** S-01 and S-02 Done. S-03 on branch `S-03-sheet-schema-migration`. First live `scrubStaging` run (2026-11-05) logged a WARNING on all 5 item tabs and replaced 0 people: the real tabs have their header on **row 2**, and the code assumed row 1. Fixed test-first under [D-027](../decisions/D-027-header-row-detection.md) (`src/api/header-row.ts`), QA signed off with follow-ups F-A to F-D (qa-log 2026-11-05), gate green, pushed with `npm run push:gas` on 2026-11-05. Git commits are local only.
 
-**Resume here:** G0.3 done 2026-11-05 (re-run: 10 people, 0 numbers, 0 notes, no WARNING; the seller said "scrub checked"). Next: the seller runs `migrateSheet` from the editor and pastes the log (counts only), then the post-migrate live checks (qa-log 2026-11-04: formulas render, State validation, formula-like name as text, rerun creates nothing). Then merge S-03 and move on to S-04 and S-05.
+**Resume here:** G0.3 done 2026-11-05. First `migrateSheet` run refused (`Tab "Books" has no "Item" column`, nothing written): Books' name column is `Brand`. Fixed inline test-first as [D-028](../decisions/D-028-books-name-under-brand.md) (commits 8707627, 7382abc), gate green (407 unit), pushed to the build copy 2026-11-05. **QA review of D-028 still owed before merging S-03.** Next: the seller re-runs `migrateSheet` and pastes the log, then the post-migrate live checks (qa-log 2026-11-04). Then merge S-03 and move on to S-04 and S-05.
 
 ## Gates
 
