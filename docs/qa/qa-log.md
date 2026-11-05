@@ -659,3 +659,20 @@ None at S1 or S2.
 - Tabs other than Tech and Books actually having their header on row 2 (the seller confirmed only those two). Any row from 1 to 5 works. Row 6 or lower gives the WARNING.
 - The post-migrate live checks listed on 2026-11-04 are still outstanding.
 - I did not run Playwright beyond the gate, or `build:gas`.
+
+## 2026-11-05: S-03 live run on the build copy (PM, live check)
+
+Seller ran everything from the Apps Script editor. Logs are counts only. No agent read the copy's data.
+
+- **scrubStaging, first run:** WARNING on all 5 item tabs, 0 people replaced, 13 numbers cleared. Cause: headers on row 2. Fixed as D-027.
+- **scrubStaging, second run (after D-027):** README 0, Tech 9 people, Gym & Sport 1, Home Things 0, Books 0, Template 0. 10 people in total, 0 numbers, 0 notes, no WARNING. The seller confirmed that Home Things and Books have no reserved or sold names, did the by-eye check, and said "scrub checked".
+- **migrateSheet, runs 1 and 2:** refused at preflight with `Tab "Books" has no "Item" column`, writing nothing. Books' name heading is `Brand (+ Link)`. Fixed as D-028. The first D-028 fix accepted only `Brand` and failed live in the same way.
+- **migrateSheet, after D-028:** the four new tabs exist. The successful run's log wasn't captured: the seller ran it more than once, and only a later re-run's log was pasted. That re-run logged all zeros (`0 columns added, 0 tabs created, … 0 claims created`), which passes the "a rerun creates nothing" check.
+- **Post-migrate checks by eye, all yes (seller):**
+  1. Tech row 2 ends with ID and Quantity, with `I-NNNN` IDs and quantity 1, and nothing new in row 1.
+  2. Claims has about 10 rows, with `Test Person N` names and sensible item names.
+  3. State validation rejects `banana`.
+  4. To do and Sold render without errors, and Sold shows Total sold.
+  5. Books `Brand (+ Link)` holds titles.
+- **Not checked live:** "a formula-like name shows as text". The scrubbed copy has no formula-like names, so this stays covered by unit tests only. The successful run's exact counts weren't seen.
+- **Owed:** QA review of the D-028 commits (8707627, 7382abc, the red test for `Brand (+ Link)`, and the follow-up fix).
