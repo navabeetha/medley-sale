@@ -42,9 +42,9 @@ Exit: an agent can push code to the build copy's script. Nobody has read the bui
 
 | # | Who | Step | Done |
 |---|---|---|---|
-| 1 | Agent | Push the script and run **only** `scrubStaging()` (S-03). Don't read or print the copy's data | ☐ |
-| 2 | The seller | Check by eye: every `Person` value is a synthetic name, the seller's number is gone from the README tab and every tab header, and no comments are left (she deletes any the script couldn't remove) | ☐ |
-| 3 | The seller | Tell the PM "scrub checked" | ☐ |
+| 1 | Agent | Push the script and run **only** `scrubStaging()` (S-03). Don't read or print the copy's data | ☑ 2026-11-05 (second run, after D-027) |
+| 2 | The seller | Check by eye: every `Person` value is a synthetic name, the seller's number is gone from the README tab and every tab header, and no comments are left (she deletes any the script couldn't remove) | ☑ 2026-11-05 |
+| 3 | The seller | Tell the PM "scrub checked" | ☑ 2026-11-05 |
 | 4 | The seller | (For S-05, when asked) Export the **scrubbed build copy** as `.xlsx` into the project's `private/` folder ([D-019](decisions/D-019-photo-export-from-scrubbed-copy.md)) | ☐ |
 
 Exit: The seller has confirmed the scrub. Agents may now run the migration, S-04 and S-05 against the build copy.
