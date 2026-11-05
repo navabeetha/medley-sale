@@ -44,5 +44,6 @@ New decisions are recorded here, one file each: `D-016-<slug>.md`, `D-017-<slug>
 | [D-033](D-033-catalogue-timings.md) | Catalogue live timings: hits ~1.7 s, cache misses ~12 s (over 3 s, raised); CORS works (D-001 GO) | Measured |
 | [D-034](D-034-browse-only-first-release.md) | Browse-only first release (Slice 1), warm catalogue every 5 min, WhatsApp link from Script Properties | Accepted (the seller) |
 | [D-035](D-035-browse-only-on-real-sheet.md) | Browse-only release reads the real sheet: ID/Quantity columns only, status mode without Claims | Accepted (the seller) |
+| [D-036](D-036-r1-qa-hardening.md) | Browse-only hardening: status ignores case and spaces, WhatsApp number needs its country code, addIdColumns checks all tabs first | Accepted (PM) |
 
-**Next free ID: D-036.** Update this line and the index whenever you add a decision.
+**Next free ID: D-037.** Update this line and the index whenever you add a decision.
