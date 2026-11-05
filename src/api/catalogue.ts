@@ -105,26 +105,34 @@ function readClaims(ss: Spreadsheet): ClaimInput[] {
 }
 
 /**
- * https://wa.me/<digits> for a seller number, or null (D-034 rule 4). Strips
- * everything but digits, then a leading "00" international prefix. wa.me wants
- * 8 to 15 digits (E.164 allows 15); anything else is treated as unset rather
- * than publishing a dead link.
+ * https://wa.me/<digits> for a seller number, or null (D-036 rule 2). Spaces,
+ * "+", "-" and brackets are stripped; any other character means the value is
+ * not a phone number, so null. A leading "00" is dropped. The rest must be 11
+ * to 15 digits with no leading 0 (the country code is required). An Indian
+ * number (91...) must be exactly 12 digits with 6-9 after the 91, which rejects
+ * a stray trunk 0 (+91 0...). Null means the site shows no reserve link rather
+ * than a wrong one.
  */
 function contactUrl(raw: string | undefined): string | null {
   if (typeof raw !== "string") return null;
-  const digits = raw.replace(/\D/g, "").replace(/^00/, "");
-  return /^\d{8,15}$/.test(digits) ? `https://wa.me/${digits}` : null;
+  const stripped = raw.replace(/[\s+\-()[\]]/g, "");
+  if (!/^\d+$/.test(stripped)) return null;
+  const digits = stripped.replace(/^00/, "");
+  if (!/^[1-9]\d{10,14}$/.test(digits)) return null;
+  if (digits.startsWith("91") && !/^91[6-9]\d{9}$/.test(digits)) return null;
+  return `https://wa.me/${digits}`;
 }
 
 /**
- * Status-mode availability (D-035). Exact-match statuses and fail closed:
+ * Status-mode availability (D-035). Statuses match ignoring case and surrounding spaces (D-036 rule 1) and fail closed:
  * Sold, blank and anything unrecognised return null (the row is left out).
  * Reserved holds the whole quantity, so freeUnits is 0.
  */
 function statusAvailability(status: CellValue | undefined, q: number): { unitsLeft: number; freeUnits: number } | null {
   if (!Number.isInteger(q) || q < 1) return null; // D-026: an unusable Quantity hides the row
-  if (status === "Available") return { unitsLeft: q, freeUnits: q };
-  if (status === "Reserved") return { unitsLeft: q, freeUnits: 0 };
+  const s = typeof status === "string" ? status.trim().toLowerCase() : "";
+  if (s === "available") return { unitsLeft: q, freeUnits: q };
+  if (s === "reserved") return { unitsLeft: q, freeUnits: 0 };
   return null;
 }
 
