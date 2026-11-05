@@ -16,7 +16,7 @@ await build({
   legalComments: "none",
   // Top-level declarations so the editor's Run menu lists them.
   footer: {
-    js: "function scrubStaging() { A44.scrubStagingRun(); }\nfunction migrateSheet() { A44.migrateSheetRun(); }\n",
+    js: "function scrubStaging() { A44.scrubStagingRun(); }\nfunction migrateSheet() { A44.migrateSheetRun(); }\nfunction doGet(e) { return A44.doGetRun(e); }\n",
   },
 });
 cpSync("src/appscript/appsscript.json", `${out}/appsscript.json`);

@@ -1,6 +1,8 @@
 // Apps Script entry points, run from the editor's Run menu. Thin: the logic is
 // in src/api/migrate.ts. Logs counts only, never names, numbers or tokens.
 
+import { catalogue } from "../api/catalogue";
+import { CATALOGUE_CACHE_KEY, handleGet } from "../api/handle-get";
 import { migrate, scrubStaging } from "../api/migrate";
 import { uuidsToBytes } from "../api/random";
 import { activeSpreadsheet } from "./adapter";
@@ -37,6 +39,28 @@ export function migrateSheetRun(): void {
   });
 }
 
+/**
+ * Web-app GET entry (brief 4.3). Public and read-only; the logic and the cache
+ * rules are in src/api/handle-get.ts. Tokens never come from the query string.
+ * CATALOGUE_CACHE_KEY (re-exported from there) is the one cache key: write
+ * handlers (S-11, S-14, S-15) must remove it after changing the sheet, or the
+ * old catalogue is served for up to 30 s. Photo counts are not wired yet, so
+ * photos is 0 (D-030 rule 3).
+ */
+export { CATALOGUE_CACHE_KEY };
+
+export function doGetRun(e?: { parameter?: Record<string, string> }): GoogleAppsScript.Content.TextOutput {
+  const body = handleGet(e?.parameter ?? {}, {
+    // Date cells arrive as midnight in the sheet's zone, so format them in that zone, not UTC (D-030 rule 6).
+    catalogue: () =>
+      catalogue(activeSpreadsheet(), {
+        formatDate: (d) => Utilities.formatDate(d, SpreadsheetApp.getActive().getSpreadsheetTimeZone(), "yyyy-MM-dd"),
+      }),
+    cache: CacheService.getScriptCache(),
+  });
+  return ContentService.createTextOutput(body).setMimeType(ContentService.MimeType.JSON);
+}
+
 // tools/build-gas.mjs bundles this file as the global `A44` and appends top-level
-// `function scrubStaging()` and `function migrateSheet()` wrappers, because the
+// `function scrubStaging()`, `function migrateSheet()` and `function doGet(e)` wrappers, because the
 // editor's Run menu only lists top-level function declarations.
