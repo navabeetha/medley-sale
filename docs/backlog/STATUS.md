@@ -5,6 +5,22 @@
 **Scope:** MVP only (brief Section 8), 43 points in 4 slices, worked in order.
 **Now:** S-01, S-02, S-03 and S-05 Done. S-04 (catalogue API, [D-030](../decisions/D-030-catalogue-shape.md)) and S-05 (photo pipeline, [D-029](../decisions/D-029-photo-pipeline-edge-cases.md), [D-031](../decisions/D-031-photo-pipeline-hardening.md)) passed QA (several fix rounds, see the qa-log) and are merged to `main` 2026-11-05. **S-04 isn't Done until its live checks pass.** The S-04 script is pushed to the build copy (2026-11-05 17:49).
 
+**Release R1, browse-only, target evening of 2026-11-06 ([D-034](../decisions/D-034-browse-only-first-release.md), [D-035](../decisions/D-035-browse-only-on-real-sheet.md)).** The seller chose: Slice 1 only (S-06, S-07, S-08), "Message to reserve" by WhatsApp, the catalogue kept warm every 5 minutes, reading her **real sheet** (ID and Quantity columns only, status mode without Claims). She'll decide afterwards whether to wait for online reserving before posting widely.
+- **Building in parallel:** S-06 catalogue screen (branch `S-06-catalogue-screen`); R1 backend (branch `R1-browse-release-api`) with status mode, `contactUrl`, `addIdColumns` and `warmCatalogue`.
+- **Seller's steps tomorrow** (about 15 minutes, 11.7 format):
+  - back up the real sheet;
+  - give the script ID;
+  - run `addIdColumns`;
+  - set `SELLER_WHATSAPP`;
+  - add the 5-minute trigger;
+  - deploy the web app;
+  - hand-fix the text typos if she wants.
+- **PM checks before sharing:**
+  - IDs match the build copy, so the photos land on the right items;
+  - the T-12 scan on the live response;
+  - CORS from Pages;
+  - timings.
+
 **Resume here:**
 - **S-04:**
   - Waiting for the seller to deploy the web app (Deploy > New deployment > Web app, Execute as Me, access Anyone) and paste the `/exec` URL.
