@@ -1,11 +1,11 @@
 # Status board
 
-*Maintained by the PM and updated after every story. Last updated: 2026-11-04 (paused for the day; S-03 code pushed to the build copy's script).*
+*Maintained by the PM and updated after every story. Last updated: 2026-11-05 (D-027 header-row fix pushed to the build copy's script; waiting for the scrub re-run).*
 
 **Scope:** MVP only (brief Section 8), 43 points in 4 slices, worked in order.
-**Now:** S-01 and S-02 Done; site live with placeholder page. S-03 code done on branch `S-03-sheet-schema-migration`: QA blocked once (B1-B4), fixed, re-checked and signed off with follow-ups R1-R6 (qa-log). Code pushed with `npm run push:gas` to the build copy's script on 2026-11-04. Nothing has run on the copy yet.
+**Now:** S-01 and S-02 Done. S-03 on branch `S-03-sheet-schema-migration`. First live `scrubStaging` run (2026-11-05) logged a WARNING on all 5 item tabs and replaced 0 people: the real tabs have their header on **row 2**, and the code assumed row 1. Fixed test-first under [D-027](../decisions/D-027-header-row-detection.md) (`src/api/header-row.ts`), QA signed off with follow-ups F-A to F-D (qa-log 2026-11-05), gate green, pushed with `npm run push:gas` on 2026-11-05. Git commits are local only.
 
-**Resume here:** the seller runs `scrubStaging` from the Apps Script editor (G0.3 part 1: steps in the runbook and the QA re-check entry) and pastes the execution log (tab names and counts only). PM checks it: about 10 people, no WARNING lines. Then G0.3 part 2: the seller's by-eye check (8 steps in the QA re-check entry), deletes threaded comments, says "scrub checked". Then run `migrateSheet` plus the live checks, merge S-03, and move on to S-04 and S-05. Every remaining Slice 1 story depends on S-03.
+**Resume here:** the seller re-runs `scrubStaging` and pastes the log. PM checks it against the expected shape in the 2026-11-05 QA entry: no WARNING; each item tab shows its own people count (a tab with reservations showing `0 people` means stop, finding F-A); about 10 people in total; numbers and notes about 0. Then G0.3 part 2: the by-eye check (8 steps in the 2026-11-04 QA re-check entry, plus reading row 1 of every tab), and the seller says "scrub checked". Then run `migrateSheet` plus the live checks, merge S-03, and move on to S-04 and S-05. Every remaining Slice 1 story depends on S-03.
 
 ## Gates
 
@@ -13,7 +13,7 @@
 |---|---|---|---|
 | G0 | G0.1 | Public GitHub repo, Pages from Actions, commit identity | Done 2026-11-03: secret added, backup cleaned (0 blocked-word hits), first deploy green |
 | G0 | G0.2 | Build copy, attached script, `clasp login` | Done 2026-11-03 |
-| G0 | G0.3 | Scrub run and checked by eye | Code pushed; waiting for the seller to run `scrubStaging` |
+| G0 | G0.3 | Scrub run and checked by eye | First run 2026-11-05: headers on row 2 not found (D-027). Fix pushed; waiting for the re-run |
 | G1 | | Staging review on phone, end of Slice 3 | Not started |
 | G2 | | Cutover (S-18) | Not started |
 
@@ -21,9 +21,9 @@ G0 is staged per [D-018](../decisions/D-018-g0-in-stages.md). Steps: [docs/runbo
 
 ## Waiting on the seller
 
-1. **G0.3 part 1:** run `scrubStaging` in the Apps Script editor and paste the log.
+1. **G0.3 part 1:** run `scrubStaging` again in the Apps Script editor and paste the log.
 2. **G0.3 part 2:** check the build copy by eye and say "scrub checked".
-3. Review the proposed decisions D-016 to D-023 when convenient. They stand as proposed meanwhile.
+3. Review the proposed decisions D-016 to D-023, D-026 and D-027 when convenient. They stand as proposed meanwhile.
 
 ## Board
 
