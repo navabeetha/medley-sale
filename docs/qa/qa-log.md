@@ -757,3 +757,40 @@ Privacy (T-12) and web-app surface: **pass**. Code can merge once F1 is fixed (w
 - The queue engine itself (covered by S-02 QA). I used it through `recalculate` only.
 - Playwright beyond the gate. No UI changed in S-04, so no screenshot is needed.
 - The pii-scan with the private blocked-words list (not configured in this worktree).
+
+## 2026-11-05: S-04 QA re-check (F1, F3, F4, F5 fixes)
+
+Reviewed e67e641 (D-030 rules 6, 8, 9 and 10 amended), 1653299 (red tests `catalogue-qa.test.ts`, `handle-get.test.ts`, exact date assertions) and 4e108fa (injected `formatDate`, pure `src/api/handle-get.ts`, tab allow-list, thinner `doGet`).
+
+### Verified
+
+- Gate `npm run check` (fresh run): exit 0. Vitest 22 files / 489 tests, Playwright 16 passed, size 0.7 KB of 50 KB, pii-scan 105 files, 0 findings. `npm run build:gas` builds. The bundle's top-level functions are still only `scrubStaging`, `migrateSheet` and `doGet`.
+- Red tests came before the fix (1653299, then 4e108fa).
+- **F1 fixed.** `availableFrom` is `YYYY-MM-DD`. The adapter injects `Utilities.formatDate(d, getSpreadsheetTimeZone(), "yyyy-MM-dd")`. Tests use the real IST-midnight instant (`2026-12-01T18:30Z`) and expect exactly `2026-12-02`. They also pin the UTC default, invalid dates, "Now" and blank (the formatter is not called for text or blank).
+- **F3 fixed.** `handleGet` is pure and every path returns JSON. A failing catalogue gives `{"error":"unavailable"}` with no message text, and nothing is cached. A failing cache read or write falls back to a fresh build. The unknown action is not echoed. Tests cover a non-Error throw and an action with a name and number in it.
+- **F4 fixed.** Only Tech, Gym & Sport, Home Things and Books are published, matched exactly and case-sensitively. Tests cover "Copy of Template", "Copy of Tech", "tech", "Garden" and "Archive". Tab names match the names the S-03 live scrub log printed.
+- **F5 guards bite.** I ran 37 hand mutants (28 on `catalogue.ts`, 9 on `handle-get.ts`) against the three test files. **All 37 were killed.** Last time's survivors are now killed: the first-link split (and "any http run"), text price passthrough or `Number()` coercion, text Quantity coercion, header fixed at row 2, header `trim`, and any Claims state accepted. Also killed: allow-list replaced by the old deny-list, made case-insensitive, or missing a tab; the formatter ignored, or the default formatter producing a full ISO string; and in `handle-get.ts`, the action trimmed or echoed, cache hit ignored, TTL or key changed, no put, error message leaked, outer try removed, cache get not guarded. The files were restored and the tree is clean.
+- `doGet` wiring, by reading: `e?.parameter ?? {}` handles a missing event or parameter. The MIME type is `ContentService.MimeType.JSON`. `GetCache` (`get(k): string|null`, `put(k, v, secs)`) fits `CacheService.getScriptCache()`, and tsc accepts it. The removed 90 KB guard is now covered by the caught `put`. The spreadsheet and the time zone are read inside the guarded `catalogue` closure.
+
+### Findings (worst first)
+
+- S4: `CacheService.getScriptCache()` (and `ContentService`) are called outside `handleGet`'s try. If the cache service itself fails to load, the response is Google's HTML error page, not JSON. This is rare, and S-06 must handle non-JSON anyway.
+- S4: failures are now silent. `{"error":"unavailable"}` returns no trace, and nothing goes to the Executions log, so a live failure is hard to diagnose. One option is to `console.error` the error's name (not its message) in `doGet`.
+- S4: `getSpreadsheetTimeZone()` is called once per date cell. That's 4 calls today. It's cheap, but it could be read once per request.
+- None of these block.
+
+### Verdict
+
+F1, F3 and F4 are fixed, and the F5 guards bite. **S-04 code passes QA and can merge.** S-04 is Done only after the live checks pass: CORS (the D-001 go or no-go) and timings (D-020).
+
+### Live-check list: changes from the 2026-11-05 entry
+
+- Check 1 also: `?action=Catalogue` and `?action=catalogue%20` return `{"error":"unknown action"}`.
+- Check 5 now expects **exactly `"2026-12-02"`** for the 2 Dec books (no time part). If the value is a day off, check the build copy's File > Settings time zone.
+- Check 9 changes: other tabs can no longer leak. Instead confirm that all four tabs appear, which proves the names match exactly (for example "Gym & Sport" with no trailing space).
+- New: a failure path can't easily be forced on staging. If any request returns `{"error":"unavailable"}`, look in the Executions view and report it.
+
+### Not verified
+
+- Everything on real Apps Script: CORS, timings, `Utilities.formatDate` output, the CacheService size limit, and error-page behaviour.
+- The `doGet` adapter itself, which has no unit test (by convention). I checked it by reading only.
