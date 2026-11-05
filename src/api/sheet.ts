@@ -1,6 +1,8 @@
 // Minimal spreadsheet interface (S-03). The Apps Script adapter implements it
 // over SpreadsheetApp; unit tests use the in-memory fake in test/fixtures.
-// Rows and columns are 1-based. Row 1 is the header row. No logic lives here.
+// Rows and columns are 1-based. System tabs (Claims, Bookings, To do, Sold) have
+// their header in row 1; item tabs and Template may not (D-027: use findHeaderRow
+// in header-row.ts). No logic lives here.
 
 export type CellValue = string | number | boolean | Date | null;
 
