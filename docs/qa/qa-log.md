@@ -861,3 +861,50 @@ Unchanged from the first S-05 entry, plus:
 - Real export structure.
 - Python versions other than 3.9.6.
 - A real CI run of the new job (it hasn't been pushed).
+
+## 2026-11-05: S-05 QA second re-check (4f87f80, 9fb7270)
+
+All probes used synthetic files in a scratch folder. Nothing in `private/` was opened or run.
+
+### Verified
+
+- Gate: `npm run check` is green (Vitest 408, Playwright 16, size 0.7 KB, pii-scan 109 files, 0 findings). `npm run test:photos`: 70 passed. Red first: at 4f87f80, 9 failed and 61 passed. `git ls-files public/photos` is empty.
+- **The ICC plus orientation fix works.** A JPEG with orientation 6 and an sRGB profile now comes out upright (100, 200). Through `run()`, PNG, JPEG, WebP and MPO sources with a profile and orientation 6 all come out 400×300.
+- **T-16 still holds with rotation running first.** Rotation keeps the source's EXIF and profile in memory, but the later steps clear them before saving. Every output from the earlier probe set had only `VP8 ` chunks, no marker bytes and no metadata in `info`:
+  - PNG with tEXt, iTXt, zTXt, eXIf and iCCP;
+  - JPEG with EXIF (maker note, GPS), XMP, IPTC, a comment and ICC;
+  - WebP with EXIF, XMP and ICCP;
+  - MPO, TIFF and GIF.
+- Path-traversal probes behave as before: reads stay inside the archive, and bad targets stop the run with a `KeyError`.
+- Mutants: 27 run against 9fb7270, 26 caught. All four survivors from the last re-check are now killed (ICC→sRGB, the header-row image, a quality floor of 50, the CLI ignoring `--allow-empty`). Putting the colour conversion back before rotation is caught by 9 tests.
+  - In my scratch copies, `test_no_synthetic_fixture_output_is_tracked_under_public_photos` also fails, because the copy isn't a git repo, so it fails closed. I counted a mutant as caught only when a second, specific test failed too.
+- Header-row mutant: I **accept** that it is killed only by the reason text. With `<` instead of `<=`, the picture on the header row still isn't published; it falls through to "no ID in this row", because `_read_tab` only records rows below the header. The outcome is the same, and the reason is the only observable difference. The seller acts on that reason text, so asserting on it is legitimate.
+- The fixture guard test can't trip on real output: real IDs are `I-NNNN`, and none of the fixture prefixes match them.
+
+### Findings
+
+1. **S3, an `mc:AlternateContent` picture can land on the wrong row.** `_scan` takes the picture (`blip`) from anywhere inside the wrapper, but the row from the **first** nested `from`. Each wrapper is one element, so there is **no double counting**: one picture per wrapper, whichever branches contain it. Probes:
+   - Choice and Fallback the same: correct row.
+   - Choice at row 3, Fallback at row 4: Choice row 3 is used, which is correct (Choice is the preferred branch).
+   - **Choice holds a non-picture shape anchored at row 5, Fallback holds the picture at row 3: the picture is attached to the row 5 item (`t-003`).** Wrong item, and nothing reports it.
+   - Choice holds an absolute-anchored picture, Fallback a picture at row 4: placed on row 4.
+
+   The new code has no test: the mutant that reverts to a direct-child `from` survives, apart from the scratch-copy artefact above. Fix: take the `from` from the same anchor element that contains the picture, with a test. How likely this is depends on whether the export uses `AlternateContent` at all (live check below). Without it, the bug can't trigger.
+2. Still open, S4, not blocking: 16-bit greyscale clips to white; a broken rels target gives a traceback; Python 3.9 is end of life; cwd-relative paths are accepted by the PM.
+
+### Verdict
+
+**Passes QA for merge.** Both blockers from the last re-check are fixed and tested, and T-16 holds. Finding 1 is S3. It doesn't block merge, because the tool hasn't run on real data. But it should be fixed, starting with a failing test, **before the seller's first real run, unless live check 1 shows no `AlternateContent`**.
+
+### Live checks needed
+
+As in the first S-05 entry, plus:
+
+1. The seller runs `unzip -p private/<export>.xlsx 'xl/drawings/*.xml' | grep -c AlternateContent` and reports only the number. If it's 0, finding 1 can't occur.
+2. On the contact sheet, every portrait photo is upright, and each photo sits under the right ID.
+
+### Not verified
+
+- Real export structure.
+- A real CI run of the `photos` job (nothing has been pushed).
+- Python versions other than 3.9.6.
