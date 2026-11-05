@@ -41,6 +41,7 @@ from PIL import Image, ImageDraw, ImageOps
 THUMB_SIZE = 144
 THUMB_MAX_BYTES = 12 * 1024  # brief 8.1
 FULL_LONGEST_SIDE = 1000
+FULL_MIN_LONGEST_SIDE = 600  # D-032: still sharp on a ~400 px wide phone screen
 FULL_MAX_BYTES = 120 * 1024  # brief 8.1
 MIN_QUALITY = 30  # D-031 rule 4: below this a photo looks bad; give up and say so instead
 HEADER_SEARCH_ROWS = 5  # D-027: the header is the first of the top 5 rows with "Person"
@@ -398,12 +399,34 @@ def process(image_bytes):
     side = min(full.size)
     thumb = full.crop((left, top, left + side, top + side)).resize((THUMB_SIZE, THUMB_SIZE), Image.LANCZOS)
 
-    return (
-        _encode_webp(thumb, THUMB_MAX_BYTES, 80),
-        _encode_webp(full, FULL_MAX_BYTES, 82),
-        full.width,
-        full.height,
-    )
+    thumb_webp = _encode_webp(thumb, THUMB_MAX_BYTES, 80)
+    full, full_webp = _fit_full(full)
+    return thumb_webp, full_webp, full.width, full.height
+
+
+def _fit_full(full):
+    """D-032: encode the full image within budget, shrinking it if quality alone can't.
+
+    Very detailed close-ups can stay over 120 KB at 1000 px even at the quality
+    floor. Rather than refuse them, shrink the longest side by 10% at a time and
+    try the quality steps again, down to FULL_MIN_LONGEST_SIDE. We never blur to
+    save bytes (brief 7.1: never hide scratches or stains). Returns
+    (image actually encoded, webp bytes); raises ValueError if even the smallest
+    size doesn't fit, so an over-budget file is never written.
+    """
+    candidate = full
+    while True:
+        try:
+            return candidate, _encode_webp(candidate, FULL_MAX_BYTES, 82)
+        except ValueError:
+            longest = max(candidate.size)
+            if longest <= FULL_MIN_LONGEST_SIDE:
+                raise
+            target = max(FULL_MIN_LONGEST_SIDE, round(longest * 0.9))
+            # Always resample from the leveled 1000 px image, never from an
+            # already-shrunk one, so repeated steps don't compound blur.
+            k = target / max(full.size)
+            candidate = full.resize((max(1, round(full.width * k)), max(1, round(full.height * k))), Image.LANCZOS)
 
 
 # ------------------------------------------------------------------- 4. run

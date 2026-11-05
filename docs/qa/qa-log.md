@@ -1033,3 +1033,32 @@ As in the earlier S-05 entries: report the media extensions and the `AlternateCo
 - Real export structure.
 - A real CI run of the `photos` job (nothing has been pushed).
 - Python versions other than 3.9.6.
+
+## 2026-11-05 — S-05 D-032 photo size fallback (`_fit_full`)
+
+**Change:** commits 8683442 (D-032 decision + tests; three give-up tests now force `pipeline.FULL_MAX_BYTES = 1024`) and cd14d9a (`_fit_full`: if the 1000 px image can't fit 120 KB at any quality, shrink the longest side 10% at a time, always resampled from the leveled 1000 px image, down to 600 px; raise if still over).
+
+**Verified:**
+- Test came first: at 8683442, 1 failed / 76 passed (`test_photo_too_detailed_for_1000px_is_shrunk_in_steps_but_never_below_600`). At HEAD `npm run test:photos` 77 passed; `npm run check` green (16 e2e passed, 0.7 KB gz, pii-scan 0 findings).
+- Read the code: it stops because `longest` gets strictly smaller each step and is held at 600 or more; an image already at or below 600 px raises on its first failure. Bytes are only returned from a successful `_encode_webp`, so it never returns an over-budget file. The returned image is what was encoded, so manifest w/h = file size (checked by a test). Metadata path (`_encode_webp`) unchanged.
+- Monkeypatching the module global takes effect: `_fit_full` reads `FULL_MAX_BYTES` when it is called. Shown by the mutants below that go red only under the 1024 patch, and by a direct run: a 400 px noise source with the 1 KB budget raises `ValueError`.
+- Mutants (each run in a scratch worktree, never in the main checkout): shrink factor 1.0 -> suite hangs (killed by a 150 s alarm), so it shows up as a hang, not a clean failure; min side 0 -> red; swap width/height -> red; returning bytes at the floor instead of raising -> red; **resample from candidate instead of full -> survives** (expected: the only difference is extra blur, which byte or size tests can't see).
+
+**Findings:** none blocking. S4: no per-test timeout, so a regression that stops it ending hangs the suite (and CI) instead of failing. S4: no test pins "resample from the 1000 px original". S4: there is no direct test that a source under 600 px raises; this review checked it by hand.
+
+**PM real run (reported, not re-run by QA):** 31 photos / 25 items, two shrunk to ~810 px (119 / 115 KB), no metadata, rerun byte-identical, size budget passes.
+
+**Not verified:** real photo output (public/photos/ untouched and unread, as instructed); how sharp the shrunk photos look on a phone, which needs the seller's visual review; CI.
+
+**Verdict:** passes QA.
+
+## 2026-11-05: S-05 live run on the seller's export (PM, live check)
+
+Export of the scrubbed build copy in `private/build-copy.xlsx` (gitignored, D-019).
+
+- **Media:** 31 `jpg`, no `AlternateContent`, no `absoluteAnchor`, no `xl/richData/`. QA findings 1, 2, 3 and the S3 AlternateContent issue can't occur on this file.
+- **First run:** stopped at photo 1 of `I-0020` ("does not fit 120 KB even at quality 30"), writing nothing. Two detailed close-ups were 150 KB and 136 KB at 1000 px and q30. Fixed as D-032 (shrink in 10% steps, down to 600 px); QA passed it (entry above).
+- **Second run:** 31 photos for 25 items, 0 skipped, 0 unplaced. `I-0020` came out 810×780 (119 KB) and `I-0021` 740×810 (115 KB). The largest full image is 119 KB and the largest thumbnail 6 KB. No output file has EXIF, XMP or ICC. `npm run size` passes, and `npm run pii` finds 0.
+- **Rerun:** byte-identical output.
+- **Seller's contact-sheet review:** "all the products upright, in center and under their IDs. No faces." She's relaxed about incidental details in her photos (memory: privacy level). Buyer data rules are unchanged.
+- **Open:** the two shrunk photos haven't been viewed on a phone yet (to be seen at G1 on staging).

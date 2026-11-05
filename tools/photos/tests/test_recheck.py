@@ -162,8 +162,9 @@ def record_webp_qualities(monkeypatch):
 
 def test_quality_floor_is_exactly_30_never_29_and_30_is_used_when_needed(monkeypatch):
     qualities = record_webp_qualities(monkeypatch)
+    monkeypatch.setattr(pipeline, "FULL_MAX_BYTES", 1024)  # D-032: nothing fits, at any size
     with pytest.raises(ValueError):
-        pipeline.process(syn.white_noise_png(2000))  # cannot fit at any quality
+        pipeline.process(syn.white_noise_png(2000))
     used = [q for q in qualities if q is not None]
     assert min(used) == 30  # reached the floor (a higher floor would stop sooner) and not below
 

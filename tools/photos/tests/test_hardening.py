@@ -166,7 +166,10 @@ def test_zero_images_is_fine_when_nothing_is_published_yet(tmp_path, existing):
 # ------------------------------------------- D-031 rule 4: hard budgets
 
 
-def test_file_that_cannot_fit_the_budget_raises_naming_the_item_and_writes_nothing(tmp_path):
+def test_file_that_cannot_fit_the_budget_raises_naming_the_item_and_writes_nothing(tmp_path, monkeypatch):
+    # D-032: real photos always fit once shrunk towards 600 px, so force the
+    # give-up path with a budget nothing can meet.
+    monkeypatch.setattr(pipeline, "FULL_MAX_BYTES", 1024)
     xlsx = tmp_path / "noise.xlsx"
     syn.build_workbook(xlsx, {"Tech": {
         "headers": HEADERS, "rows": [["Synthetic Name", "noise-001", None, None]],
@@ -188,6 +191,7 @@ def test_quality_never_drops_below_30_even_when_giving_up(tmp_path, monkeypatch)
         return real_save(self, fp, format, **params)
 
     monkeypatch.setattr(Image.Image, "save", spy)
+    monkeypatch.setattr(pipeline, "FULL_MAX_BYTES", 1024)  # D-032: force giving up
     try:
         pipeline.process(syn.white_noise_png(2000))
     except ValueError:
@@ -312,3 +316,23 @@ def test_contact_sheet_labels_use_item_ids_never_item_names(tmp_path, monkeypatc
     pipeline.run(xlsx, tmp_path / "public" / "photos", tmp_path / "private" / "c.jpg")
     assert any("tech-001" in t for t in drawn)
     assert not any("Synthetic Name" in t for t in drawn)
+
+
+# ------------------------------------------- D-032: shrink rather than refuse
+
+
+def test_photo_too_detailed_for_1000px_is_shrunk_in_steps_but_never_below_600():
+    # Measured: this 1200x900 photo is about 166 KB at 1000 px even at q30, and
+    # fits at 900 px (like the two real close-ups that stopped the first live run).
+    thumb, full, w, h = pipeline.process(syn.needs_shrinking_photo(alpha=0.6))
+    assert len(full) <= 120 * 1024
+    assert 600 <= max(w, h) < 1000
+    got = Image.open(io.BytesIO(full))
+    assert got.size == (w, h)
+    assert round(w / h, 2) == round(1200 / 900, 2)  # aspect ratio kept
+    assert Image.open(io.BytesIO(thumb)).size == (144, 144)  # thumbnail unaffected
+
+
+def test_photo_that_fits_at_1000px_is_not_shrunk():
+    _, _, w, h = pipeline.process(syn.needs_shrinking_photo(alpha=0.3))
+    assert max(w, h) == 1000
