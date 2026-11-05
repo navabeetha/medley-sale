@@ -1151,3 +1151,42 @@ Reviewed by eye: no overflow, long names wrap, and status is shown as text and n
 ### Verdict
 
 **Does not pass QA yet.** There is no S1 or S2. F1 makes the AC "cached… shown right away" depend on a second network request, and a stalled manifest leaves the loading line up for good with no retry (brief 7). F2 can leave a returning visitor on a blank page with no recovery. Both are small fixes in `main.ts`, and each needs a failing test first. F3 to F6 are S4s for the PM; F6 needs the seller's copy confirmation.
+
+## 2026-11-05: S-06 re-check of QA fixes (commits 9a97453, 0c7c95c, ffef800)
+
+**What changed:** `main.ts` renders without waiting on the manifest (3 s manifest timeout, cached manifest, thumbnails applied when it arrives, 72 px slot reserved when `photos > 0`); items validated (`isValidItem`: string id/name, numeric freeUnits/unitsLeft); a cache with any invalid item is dropped whole (PM decision), API items filtered one by one; `reserveUrl` uses `URL`/`searchParams`; `.error a` gets 44 px; manifest entries checked; refresh-failed copy is "Couldn't refresh just now — showing the last saved list."
+
+**Gate:** `npm run check` re-run fresh in the worktree: tsc, eslint, unit, 294 Playwright passed / 2 skipped (the Chromium-only CLS test on WebKit), 3.3 KB gzipped, pii 0 findings.
+
+**Repros re-run** (temporary scratch spec, deleted afterwards; chromium-iphone and webkit-iphone):
+- F1 fixed. Manifest that never answers: 4 rows within 3 s. Cached rows with API hanging and manifest delayed 3 s: rows in 15–20 ms.
+- F2 fixed. API `[{"id":"I-1","name":"x"}, null, ...4 good]`: 4 rows, and after reload still 4 rows, no pageerror.
+- F3 fixed. Fallback link is 224x44.
+- F4 fixed. `https://wa.me/…?text=hi` gives one `text` param, the reserve message.
+- F5 fixed. Junk manifest entries give no `<img>` and no "undefined" in the page.
+- F6 copy: refresh-failed notice reads as the PM decided. Seller copy confirmation is still open.
+
+**CLS (Chromium only, real-shaped data: photos > 0 on items in the manifest, manifest delayed 2 s):** 0 (also 0 with the API delayed 500 ms). API says photos 0 but manifest has entries: 0.045 (the shift the implementer mentioned; acceptable, under 0.1, and only from a data mismatch). photos > 0 on every item but the manifest has entries for only 2: 0.026 (empty slots are removed, rows shift left). All under 0.1.
+
+**Regressions checked, all fine:** hostile `<img onerror>` name stays as text, no dialog; `link` not rendered; 320 px with 140-char unbroken name and brand: no overflow; every reserve link is 44 px tall or more; allow-list rejects `javascript:`, `https://evil.example/`, `http://wa.me/1`, `https://wa.me.evil.example/1` (no anchors); empty catalogue shows "Nothing is listed right now. Please check back soon."
+
+**Screenshot:** `<scratchpad>/shots/s06-recheck-390-{webkit,chromium}-iphone.png` (synthetic data). Looked at the WebKit one: thumbnails aligned, long text wraps, reserve links clear, no overflow.
+
+### New findings
+
+**F7, S3 (low likelihood): an item that passes `isValidItem` but has no `price` key blanks the whole list.** `formatPrice(undefined)` throws (`undefined !== null`, then `.toLocaleString`). On a first visit that means 0 rows and the "couldn't load" box. Retry will hit the same error, though the WhatsApp link is shown because `contactUrl` is set before the throw. On a repeat visit the cached list stays, with the refresh notice, so the stale list never updates. That contradicts the PM's "API answers filtered item by item". Repro: mock API `{items:[{...ITEMS[0], id:"I-7", price: undefined}, ...ITEMS], contactUrl:null}` (JSON drops the key), goto `/`: 0 rows, error box shown, on both engines. Fix direction: validate `price` (number or null) and the other fields the view reads, or render rows defensively. It needs a failing test first. Our handler emits typed items, so this case shouldn't happen in practice.
+
+**F8, S4: a manifest slower than 3 s leaves empty 72 px gaps for the session.** The fetch aborts, `applyPhotos` never runs, and the reserved slots for `photos > 0` items stay blank. Repro: manifest delayed 4 s with real-shaped data: 0 imgs, 2 empty slots after 5 s. On slow mobile data this is plausible on a first visit. A repeat visit uses the cached manifest.
+
+**F9, S4 / manual check: the reserve text is now `+`-encoded** (`Hi%21+I%27d+like+to+reserve%3A+Test+Kettle`, from `URLSearchParams`), where before it was `%20`. Decoding with `URLSearchParams` gives the exact text, so the tests pass, but WhatsApp's handling of `+` hasn't been verified on a device. Manual check (G1): tap "Message to reserve" on iOS and Android and confirm the spaces show as spaces (don't send).
+
+### Coverage gaps
+- No test for a valid-looking item that's missing `price` or `tab` (F7).
+- No test for a manifest that arrives after the timeout (F8).
+- The CLS test still uses `photos: 0` fixtures and an undelayed manifest, so it doesn't cover the delayed-manifest case measured above. Suggest adding a version with real-shaped data.
+
+### Not verified
+Pixel profiles for the scratch repros (iPhone profiles only; the gate covers all four for the committed tests); real device or staging; WhatsApp `+` decoding; screen readers.
+
+### Verdict
+**Passes QA.** F1–F5 are fixed and pinned by tests, there are no regressions, and CLS is under 0.1 with a delayed manifest. F7 (S3, a server-typed payload makes it unlikely) and F8/F9 (S4) go to the PM as follow-ups; F7 should get a failing test and fix before G1. The F6 seller copy confirmation is still open.
