@@ -38,10 +38,10 @@ describe("handleGet", () => {
     expect(calls).toBe(0);
   });
 
-  it("on a miss builds the catalogue and caches the exact body under 'catalogue' for 30 seconds", () => {
+  it("on a miss builds the catalogue and caches the exact body under 'catalogue' for 600 seconds (D-034)", () => {
     const cache = memoryCache();
     const body = handleGet({ action: "catalogue" }, { catalogue: () => DATA, cache });
-    expect(cache.puts).toEqual([{ k: "catalogue", v: body, secs: 30 }]);
+    expect(cache.puts).toEqual([{ k: "catalogue", v: body, secs: 600 }]);
   });
 
   it("a second call after a miss is served from the cache", () => {
