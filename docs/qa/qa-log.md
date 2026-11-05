@@ -908,3 +908,41 @@ As in the first S-05 entry, plus:
 - Real export structure.
 - A real CI run of the `photos` job (nothing has been pushed).
 - Python versions other than 3.9.6.
+
+## 2026-11-05: S-05 QA third re-check (e3a2f11, 05f3bf5)
+
+All probes used synthetic files in a scratch folder. Nothing in `private/` was opened or run.
+
+### Verified
+
+- Gate: `npm run check` is green (Vitest 408, Playwright 16, size 0.7 KB, pii-scan 110 files, 0 findings). `npm run test:photos`: 75 passed.
+- Red first: at e3a2f11, the two new AlternateContent tests fail. A third test also fails in my scratch copy, but only because the copy isn't a git repo.
+- **The AlternateContent row bug is fixed.** In `ac.py`, the case of a non-picture shape in Choice at row 5 and the picture in Fallback at row 3 now places the picture on **row 3** (`t-001`). The other cases:
+  - Choice and Fallback the same: row 3, one image.
+  - Choice at row 3, Fallback at row 4: row 3, one image.
+  - Choice holds an absolute-anchored picture: skipped as an absolute anchor. Choice is preferred, so the Fallback is ignored, which is acceptable.
+- **No double counting.** Extra probes in `ac2.py`:
+  - Distinct pictures in Choice and Fallback: only the Choice picture is placed, and the unused Fallback media counts as `unplaced_media` = 1.
+  - Two pictures in Choice and one in Fallback: both Choice pictures are placed, each on its own row.
+  - An empty first Choice followed by a second Choice with a picture: the second Choice is used.
+- **T-16 still holds.** `meta.py` and `recheck.py` were re-run (PNG, JPEG, WebP, MPO, TIFF, GIF). Every output had only `VP8 ` chunks, no marker bytes and no metadata in `info`. `icc_orient.py` is upright with and without a colour profile. The path-traversal probes are unchanged.
+- **Mutants: 31 run against 05f3bf5, 30 caught.** That's the mut3 set plus five new AlternateContent mutants: no `break`, Fallback first, ignoring the picture check, skipping the wrapper, and reverting to a nested `from`. I counted a mutant as caught only when a specific test failed, not just the scratch-copy git artefact.
+- The one survivor, reverting the row lookup to a nested-`from` search, is **equivalent** now. `_anchors` yields the picture's own anchor, and that anchor's first `from` (in document order) is its own direct child, so the nested search can't reach a neighbour's.
+
+### Findings
+
+No new findings. Open S4s carried over, not blocking: 16-bit greyscale clips to white; a broken rels target gives a traceback; Python 3.9 is end of life; cwd-relative paths are accepted by the PM.
+
+### Verdict
+
+**Passes QA for merge.** No S1, S2 or S3 open.
+
+### Live checks needed
+
+As in the earlier S-05 entries: report the media extensions and the `AlternateContent` count; run `npm run photos` and report the counts, `skipped` and `unplaced_media`; review the contact sheet for orientation, crops, the right ID under each photo, and no people, names or addresses; run `npm run check` on the real output; a second run should change nothing.
+
+### Not verified
+
+- Real export structure.
+- A real CI run of the `photos` job (nothing has been pushed).
+- Python versions other than 3.9.6.
