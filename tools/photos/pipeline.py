@@ -69,6 +69,32 @@ def _rels(zf, part):
     return out
 
 
+_NS_MC = "{http://schemas.openxmlformats.org/markup-compatibility/2006}"
+
+
+def _has_picture(anchor):
+    return next(anchor.iter(_NS_A + "blip"), None) is not None
+
+
+def _anchors(parent):
+    """Yield the real drawing anchors under `parent` (one per placed object).
+
+    An mc:AlternateContent wrapper holds the same drawing twice (Choice for newer
+    Excel, Fallback for older). Take the Choice's anchors if it holds a picture,
+    otherwise the Fallback's, so a picture is never counted twice and each one keeps
+    the position of the anchor that actually contains it.
+    """
+    for el in parent:
+        if el.tag == _NS_MC + "AlternateContent":
+            for branch in (b for tag in ("Choice", "Fallback") for b in el.findall(_NS_MC + tag)):
+                chosen = [a for a in _anchors(branch) if _has_picture(a)]
+                if chosen:
+                    yield from chosen
+                    break
+        elif el.tag.endswith("Anchor"):
+            yield el
+
+
 def _scan(xlsx_path):
     """Read pictures straight from the workbook zip. Returns (images, media_files, media_used).
 
@@ -93,13 +119,13 @@ def _scan(xlsx_path):
                 if not drawing_part or drawing_part not in zf.namelist():
                     continue
                 drawing_rels = _rels(zf, drawing_part)
-                for anchor in ET.fromstring(zf.read(drawing_part)):
+                for anchor in _anchors(ET.fromstring(zf.read(drawing_part))):
                     blip = next(anchor.iter(_NS_A + "blip"), None)
                     target = drawing_rels.get(blip.get(_NS_REL + "embed")) if blip is not None else None
                     if target not in media:
                         continue  # a shape or chart, not a picture we can read
                     used.add(target)
-                    start = next(anchor.iter(_NS_XDR + "from"), None)  # iter: also finds it inside mc:AlternateContent
+                    start = anchor.find(_NS_XDR + "from")  # the picture's OWN anchor, never a neighbour's
                     if start is None:  # absoluteAnchor
                         row, col = None, 0
                     else:
