@@ -1,4 +1,11 @@
 import { test, expect } from "@playwright/test";
+import { mockApi, mockPhotos, ok } from "./helpers";
+
+// S-06: the page now fetches the catalogue on load, so smoke runs against the mocked API too.
+test.beforeEach(async ({ page }) => {
+  await mockApi(page, ok());
+  await mockPhotos(page);
+});
 
 test("page loads with the right title and a rendered placeholder", async ({ page }) => {
   const errors: string[] = [];
