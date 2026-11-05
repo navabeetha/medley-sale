@@ -315,7 +315,7 @@ def white_noise_png(size: int, seed: int = 3) -> bytes:
     return buf.getvalue()
 
 
-def needs_shrinking_photo(size=(1200, 900), seed=1) -> bytes:
+def needs_shrinking_photo(size=(1200, 900), seed=1, alpha=0.2) -> bytes:
     """Photo-like image whose full WebP exceeds 120 KB at the first quality step
     (measured: needs about q54 to fit) but fits well above the q30 floor."""
     rnd = random.Random(seed)
@@ -324,5 +324,86 @@ def needs_shrinking_photo(size=(1200, 900), seed=1) -> bytes:
     big = coarse.resize(size, Image.BICUBIC)
     noise = Image.effect_noise(size, 60).convert("RGB")
     buf = io.BytesIO()
-    Image.blend(big, noise, 0.2).save(buf, "PNG")
+    Image.blend(big, noise, alpha).save(buf, "PNG")
+    return buf.getvalue()
+
+
+# ---------------------------------------------------------------------------
+# ICC helpers
+# ---------------------------------------------------------------------------
+
+
+def srgb_icc() -> bytes:
+    from PIL import ImageCms
+
+    return ImageCms.ImageCmsProfile(ImageCms.createProfile("sRGB")).tobytes()
+
+
+def linear_rgb_icc() -> bytes:
+    """A tiny hand-built ICC v2 matrix/TRC profile: sRGB primaries, gamma 1.0 (linear).
+
+    Not sRGB, so converting pixels from it to sRGB must change them a lot: a
+    linear value of 64/255 is about 0.25 of full light, which sRGB encodes as
+    about 137/255. Primaries are the D50-adapted sRGB colorants (Bruce Lindbloom).
+    """
+    import struct
+
+    def s15(v):  # s15Fixed16Number
+        return struct.pack(">i", round(v * 65536))
+
+    def xyz_tag(x, y, z):
+        return b"XYZ \x00\x00\x00\x00" + s15(x) + s15(y) + s15(z)
+
+    curv = b"curv\x00\x00\x00\x00" + struct.pack(">I", 1) + struct.pack(">H", 256)  # gamma 1.0 (u8Fixed8)
+    desc_text = b"synthetic linear rgb\x00"
+    desc = b"desc\x00\x00\x00\x00" + struct.pack(">I", len(desc_text)) + desc_text + b"\x00" * (4 + 4 + 2 + 1 + 67)
+    cprt = b"text\x00\x00\x00\x00" + b"public domain\x00"
+    tags = [
+        (b"desc", desc),
+        (b"cprt", cprt),
+        (b"wtpt", xyz_tag(0.9642, 1.0, 0.8249)),
+        (b"rXYZ", xyz_tag(0.4360747, 0.2225045, 0.0139322)),
+        (b"gXYZ", xyz_tag(0.3850649, 0.7168786, 0.0971045)),
+        (b"bXYZ", xyz_tag(0.1430804, 0.0606169, 0.7141733)),
+        (b"rTRC", curv),
+        (b"gTRC", curv),
+        (b"bTRC", curv),
+    ]
+    table, body, offset = b"", b"", 128 + 4 + 12 * len(tags)
+    for sig, data in tags:
+        pad = (-len(data)) % 4
+        table += sig + struct.pack(">II", offset + len(body), len(data))
+        body += data + b"\x00" * pad
+    size = offset + len(body)
+    header = (
+        struct.pack(">I", size) + b"\x00\x00\x00\x00" + b"\x02\x10\x00\x00"  # size, cmm, v2.1
+        + b"mntr" + b"RGB " + b"XYZ " + b"\x00" * 12 + b"acsp" + b"\x00" * 4 + b"\x00" * 4 + b"\x00" * 8
+        + b"\x00" * 4 + b"\x00\x00\x00\x00"
+        + s15(0.9642) + s15(1.0) + s15(0.8249)  # PCS illuminant D50
+        + b"\x00" * 4 + b"\x00" * 16 + b"\x00" * 28
+    )
+    header = header[:128].ljust(128, b"\x00")
+    return header + struct.pack(">I", len(tags)) + table + body
+
+
+def icc_oriented_image(fmt: str, icc: bytes) -> bytes:
+    """200x100 stored, left red / right blue, EXIF orientation 6, with an ICC profile.
+
+    Upright result is 100x200 with red on top.
+    """
+    im = Image.new("RGB", (200, 100), (255, 0, 0))
+    ImageDraw.Draw(im).rectangle([100, 0, 199, 99], fill=(0, 0, 255))
+    exif = Image.Exif()
+    exif[0x0112] = 6
+    buf = io.BytesIO()
+    if fmt == "JPEG":
+        im.save(buf, "JPEG", exif=exif, icc_profile=icc, quality=95)
+    elif fmt == "PNG":
+        im.save(buf, "PNG", exif=exif, icc_profile=icc)
+    elif fmt == "WEBP":
+        im.save(buf, "WEBP", exif=exif, icc_profile=icc, lossless=True)
+    elif fmt == "MPO":
+        im.save(buf, "MPO", save_all=True, append_images=[im.copy()], exif=exif, icc_profile=icc)
+    else:
+        raise ValueError(fmt)
     return buf.getvalue()
