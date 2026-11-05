@@ -3,13 +3,15 @@
 import type { CatalogueItem } from "../api/catalogue";
 import { API_URL } from "./config";
 import {
-  availabilityLabels, displayTitle, formatPrice, pickupLabel, reserveUrl, sortItems, subtitle,
+  availabilityLabels, displayTitle, formatPrice, pickupLabel, reserveUrl, sortItems, subtitle, validItems,
 } from "./view-model";
 
 interface Catalogue { items: CatalogueItem[]; contactUrl: string | null }
 interface Photo { thumb: string; alt: string }
 
 const CACHE_KEY = "medley-sale:catalogue:v1";
+const MANIFEST_KEY = "medley-sale:manifest:v1";
+const MANIFEST_TIMEOUT_MS = 3_000; // the list never waits on photos (F1)
 const TIMEOUT_MS = 20_000; // D-033: warm misses reach 13 s; give up well after that
 const WA_PREFIX = "https://wa.me/";
 
@@ -28,15 +30,31 @@ function parseCatalogue(v: unknown): Catalogue | null {
   if (!o || typeof o !== "object" || !Array.isArray(o.items) || "error" in o) return null;
   // Only a wa.me link is ever used as a contact URL, whatever the response says.
   const c = typeof o.contactUrl === "string" && o.contactUrl.startsWith(WA_PREFIX) ? o.contactUrl : null;
-  return { items: o.items as CatalogueItem[], contactUrl: c };
+  return { items: validItems(o.items), contactUrl: c };
 }
 
 function readCache(): Catalogue | null {
   try {
     const raw = localStorage.getItem(CACHE_KEY);
-    return raw ? parseCatalogue(JSON.parse(raw)) : null;
+    if (!raw) return null;
+    const parsed: unknown = JSON.parse(raw);
+    const c = parseCatalogue(parsed);
+    // We wrote this cache ourselves, so one bad item means it is corrupt: treat the whole thing
+    // as no cache (and drop it) rather than show a partial list. Zero valid items is no cache too.
+    const n = (parsed as { items: unknown[] }).items.length;
+    if (c && c.items.length > 0 && c.items.length === n) return c;
+    clearCache();
+    return null;
   } catch {
     return null;
+  }
+}
+
+function clearCache(): void {
+  try {
+    localStorage.removeItem(CACHE_KEY);
+  } catch {
+    /* blocked: nothing to clear */
   }
 }
 
@@ -64,13 +82,43 @@ async function fetchCatalogue(): Promise<Catalogue> {
   }
 }
 
-async function fetchManifest(): Promise<Record<string, Photo[]>> {
+type Manifest = Record<string, unknown>;
+
+/** The first well-formed photo of an item; malformed manifest entries are skipped (F5). */
+function firstPhoto(m: Manifest, id: string): Photo | undefined {
+  const list = m[id];
+  if (!Array.isArray(list)) return undefined;
+  return list.find((p): p is Photo =>
+    !!p && typeof p === "object" && typeof (p as Photo).thumb === "string" && typeof (p as Photo).alt === "string");
+}
+
+function readManifestCache(): Manifest {
   try {
-    const res = await fetch("photos/manifest.json");
-    const m: unknown = res.ok ? await res.json() : {};
-    return m && typeof m === "object" ? (m as Record<string, Photo[]>) : {};
+    const m: unknown = JSON.parse(localStorage.getItem(MANIFEST_KEY) ?? "null");
+    return m && typeof m === "object" && !Array.isArray(m) ? (m as Manifest) : {};
   } catch {
-    return {}; // no photos is fine; rows just have no thumbnail
+    return {};
+  }
+}
+
+/** Short timeout; any failure means "no new manifest" (rows just keep whatever thumbnails they have). */
+async function fetchManifest(): Promise<Manifest | null> {
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), MANIFEST_TIMEOUT_MS);
+  try {
+    const res = await fetch("photos/manifest.json", { signal: ctl.signal });
+    const m: unknown = res.ok ? await res.json() : null;
+    if (!m || typeof m !== "object" || Array.isArray(m)) return null;
+    try {
+      localStorage.setItem(MANIFEST_KEY, JSON.stringify(m));
+    } catch {
+      /* blocked or full: no manifest cache */
+    }
+    return m as Manifest;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -90,16 +138,30 @@ function start(root: HTMLElement): void {
     status, notes, list,
   );
 
-  const manifest = fetchManifest();
+  let photos: Manifest = readManifestCache(); // last good manifest: repeat visits show thumbnails at once
   let contactUrl: string | null = null;
   let hasList = false;
 
-  async function show(c: Catalogue): Promise<void> {
-    const photos = await manifest;
+  // Puts a thumbnail in (or takes an empty slot out of) every row, using the current manifest.
+  function applyPhotos(): void {
+    for (const li of list.children) {
+      const id = (li as HTMLElement).dataset.id;
+      const photo = id ? firstPhoto(photos, id) : undefined;
+      const slot = li.querySelector(".slot");
+      if (photo && slot) fillSlot(slot as HTMLElement, photo);
+      else if (photo) {
+        const s = el("span", undefined, "slot");
+        fillSlot(s, photo);
+        li.prepend(s);
+      } else if (slot && !slot.firstChild) slot.remove();
+    }
+  }
+
+  function show(c: Catalogue): void {
     contactUrl = c.contactUrl ?? contactUrl;
     hasList = true;
     const items = sortItems(c.items);
-    list.replaceChildren(...items.map((i) => row(i, c.contactUrl, photos[i.id]?.[0])));
+    list.replaceChildren(...items.map((i) => row(i, c.contactUrl, firstPhoto(photos, i.id))));
     const lines: HTMLElement[] = [];
     if (items.length === 0) {
       lines.push(el("p", "Nothing is listed right now. Please check back soon."));
@@ -117,7 +179,9 @@ function start(root: HTMLElement): void {
   function showError(): void {
     const box = el("div", undefined, "error", "catalogue-error");
     box.setAttribute("role", "alert");
-    box.append(el("p", "We couldn't load the sale just now. Please try again."));
+    box.append(el("p", hasList
+      ? "Couldn't refresh just now — showing the last saved list."
+      : "We couldn't load the sale just now. Please try again."));
     const retry = el("button", "Try again");
     retry.type = "button";
     retry.addEventListener("click", () => void load());
@@ -138,34 +202,54 @@ function start(root: HTMLElement): void {
     else status.replaceChildren();
     try {
       const c = await fetchCatalogue();
+      show(c);
       writeCache(c);
-      await show(c);
       status.replaceChildren();
     } catch {
       showError(); // a cached list, if any, stays on screen underneath
     }
   }
 
+  // Thumbnails arrive whenever the manifest does; the list never waits for it.
+  void fetchManifest().then((m) => {
+    if (!m) return;
+    photos = m;
+    applyPhotos();
+  });
+
   const cached = readCache();
   if (cached) {
-    contactUrl = cached.contactUrl;
-    void show(cached).then(() => load());
-  } else {
-    void load();
+    try {
+      show(cached);
+    } catch {
+      // A cached list that cannot be drawn must not leave a blank page: drop it and load normally.
+      clearCache();
+      hasList = false;
+      list.replaceChildren();
+      notes.replaceChildren();
+    }
   }
+  void load();
+}
+
+function fillSlot(slot: HTMLElement, photo: Photo): void {
+  const img = el("img", undefined, "thumb");
+  img.src = `photos/${photo.thumb}`;
+  img.alt = photo.alt;
+  img.width = 72;
+  img.height = 72;
+  img.loading = "lazy";
+  slot.replaceChildren(img);
 }
 
 function row(item: CatalogueItem, contactUrl: string | null, photo: Photo | undefined): HTMLElement {
   const li = el("li", undefined, "row", "item-row");
   li.dataset.id = item.id;
-  if (photo) {
-    const img = el("img", undefined, "thumb");
-    img.src = `photos/${photo.thumb}`;
-    img.alt = photo.alt;
-    img.width = 72;
-    img.height = 72;
-    img.loading = "lazy";
-    li.append(img);
+  // The 72 px slot is reserved when a photo is known or expected, so a late manifest causes no shift.
+  if (photo || item.photos > 0) {
+    const slot = el("span", undefined, "slot");
+    if (photo) fillSlot(slot, photo);
+    li.append(slot);
   }
   const body = el("div", undefined, "body");
   body.append(el("p", displayTitle(item), "name", "item-name"));

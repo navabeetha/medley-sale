@@ -43,8 +43,28 @@ export function sortItems(items: CatalogueItem[]): CatalogueItem[] {
   return [...free, ...items.filter((i) => i.freeUnits <= 0)];
 }
 
+/** An item the view can safely render: string id and name, numeric freeUnits and unitsLeft (F2). */
+export function isValidItem(v: unknown): v is CatalogueItem {
+  if (!v || typeof v !== "object") return false;
+  const o = v as Record<string, unknown>;
+  return typeof o.id === "string" && typeof o.name === "string"
+    && typeof o.freeUnits === "number" && typeof o.unitsLeft === "number";
+}
+
+/** Keeps only the valid items, in order. Anything that is not an array gives an empty list. */
+export function validItems(items: unknown): CatalogueItem[] {
+  return Array.isArray(items) ? items.filter(isValidItem) : [];
+}
+
 /** D-034: the server's contact URL plus a pre-filled message. Null when no contact URL is known. */
 export function reserveUrl(contactUrl: string | null, itemName: string): string | null {
   if (!contactUrl) return null;
-  return `${contactUrl}?text=${encodeURIComponent(`Hi! I'd like to reserve: ${itemName}`)}`;
+  try {
+    // URL API, not string concatenation: a contact URL with its own query still gets one `text`.
+    const url = new URL(contactUrl);
+    url.searchParams.set("text", `Hi! I'd like to reserve: ${itemName}`);
+    return url.toString();
+  } catch {
+    return null;
+  }
 }

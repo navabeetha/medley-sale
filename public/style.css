@@ -5,10 +5,11 @@ p { margin: 0; }
 .note { color: #444; font-size: .9rem; margin: .25rem 0; }
 .error { border: 1px solid #b00020; border-radius: 8px; padding: .75rem; margin: .75rem 0; }
 .error p { margin-bottom: .5rem; }
-button, .reserve { min-height: 44px; min-width: 44px; box-sizing: border-box; font: inherit; }
+button, .reserve, .error a { min-height: 44px; min-width: 44px; box-sizing: border-box; font: inherit; }
 button { padding: 0 1rem; }
 .catalogue { list-style: none; margin: .75rem 0 0; padding: 0; }
 .row { display: flex; gap: .75rem; padding: .75rem 0; border-top: 1px solid #ddd; }
+.slot { width: 72px; height: 72px; flex: none; }
 .thumb { width: 72px; height: 72px; object-fit: cover; border-radius: 6px; flex: none; }
 .body { flex: 1; min-width: 0; }
 .name { font-weight: 600; }
@@ -17,3 +18,4 @@ button { padding: 0 1rem; }
 .price { font-weight: 600; }
 .status { font-weight: 600; color: #8a4b00; }
 .reserve { display: inline-flex; align-items: center; margin-top: .25rem; color: #0b57d0; font-weight: 600; }
+.error a { display: inline-flex; align-items: center; color: #0b57d0; font-weight: 600; }
