@@ -117,7 +117,7 @@ export function guardText(s: string): string {
   return /^[=+\-@]/.test(s) ? `'${s}` : s;
 }
 
-const isBlank = (v: CellValue | undefined): boolean =>
+export const isBlank = (v: CellValue | undefined): boolean =>
   v === null || v === undefined || (typeof v === "string" && v.trim() === "");
 
 /** 1-based column of the first header matching any name, or 0. */
@@ -127,7 +127,38 @@ function findCol(head: CellValue[], names: string[]): number {
 }
 
 /** 1-based column of a header, or 0. */
-const colOf = (head: CellValue[], name: string): number => findCol(head, [name]);
+export const colOf = (head: CellValue[], name: string): number => findCol(head, [name]);
+
+/**
+ * Appends any missing "ID" and "Quantity" headers at the far right of the
+ * header row (D-027) and returns how many it added. `head` is updated too, so
+ * later lookups on it see the new columns. Shared with addIdColumns (D-035).
+ */
+export function ensureIdQuantityHeaders(tab: Tab, hr: number, head: CellValue[]): number {
+  let added = 0;
+  for (const name of [ID, QUANTITY]) {
+    if (colOf(head, name)) continue;
+    tab.setCell(hr + 1, head.length + 1, name);
+    head.push(name);
+    added++;
+  }
+  return added;
+}
+
+/**
+ * Hands out the next free "I-NNNN" ID, counting from I-0001 and skipping any
+ * ID in `used` (which it adds to). Shared with addIdColumns so both tools give
+ * the same item the same ID (the published photos are named by it).
+ */
+export function idAllocator(used: Set<string>): () => string {
+  let next = 1;
+  return () => {
+    let id: string;
+    do id = `I-${String(next++).padStart(4, "0")}`; while (used.has(id));
+    used.add(id);
+    return id;
+  };
+}
 
 function requireCol(tab: Tab, head: CellValue[], names: string[]): number {
   const c = findCol(head, names);
@@ -376,12 +407,7 @@ export function migrate(ss: Spreadsheet, opts: MigrateOptions): MigrateResult {
     const hr = findHeaderRow(grid);
     if (hr < 0) continue; // only a Template without a header can get here
     const head = grid[hr]!;
-    for (const name of [ID, QUANTITY]) {
-      if (colOf(head, name)) continue;
-      tab.setCell(hr + 1, head.length + 1, name);
-      head.push(name);
-      result.columnsAdded++;
-    }
+    result.columnsAdded += ensureIdQuantityHeaders(tab, hr, head);
   }
 
   // 4. Stable IDs (kept if already set) and quantity 1 where blank.
@@ -398,13 +424,7 @@ export function migrate(ss: Spreadsheet, opts: MigrateOptions): MigrateResult {
     const idCol = colOf(grid[hr]!, ID);
     for (const r of grid.slice(hr + 1)) if (!isBlank(r[idCol - 1])) usedIds.add(String(r[idCol - 1]));
   }
-  let nextId = 1;
-  const newId = (): string => {
-    let id: string;
-    do id = `I-${String(nextId++).padStart(4, "0")}`; while (usedIds.has(id));
-    usedIds.add(id);
-    return id;
-  };
+  const newId = idAllocator(usedIds);
   const fillQuantity = (tab: Tab, row: number, qtyCol: number, cells: CellValue[]) => {
     if (!isBlank(cells[qtyCol - 1])) return;
     tab.setCell(row, qtyCol, 1);

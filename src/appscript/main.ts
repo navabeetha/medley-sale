@@ -1,10 +1,12 @@
 // Apps Script entry points, run from the editor's Run menu. Thin: the logic is
 // in src/api/migrate.ts. Logs counts only, never names, numbers or tokens.
 
+import { addIdColumns } from "../api/add-id-columns";
 import { catalogue } from "../api/catalogue";
 import { CATALOGUE_CACHE_KEY, handleGet } from "../api/handle-get";
 import { migrate, scrubStaging } from "../api/migrate";
 import { uuidsToBytes } from "../api/random";
+import { warmCatalogue } from "../api/warm-catalogue";
 import { activeSpreadsheet } from "./adapter";
 
 /**
@@ -40,27 +42,51 @@ export function migrateSheetRun(): void {
 }
 
 /**
+ * D-035 rule 3: prepares the real sheet (ID and Quantity columns, IDs). Run once
+ * from the editor. Logs counts only. No BUILD COPY guard, by design.
+ */
+export function addIdColumnsRun(): void {
+  addIdColumns(activeSpreadsheet(), { log: (l) => console.log(l) });
+}
+
+/**
+ * D-034 rule 1: refreshes the cached catalogue. Not run by hand in normal use:
+ * the seller adds a time-driven trigger on `warmCatalogue`, every 5 minutes, in
+ * the editor's Triggers screen (no extra OAuth scope needed).
+ */
+export function warmCatalogueRun(): void {
+  warmCatalogue({ catalogue: buildCatalogue, cache: CacheService.getScriptCache(), log: (l) => console.log(l) });
+}
+
+/**
  * Web-app GET entry (brief 4.3). Public and read-only; the logic and the cache
  * rules are in src/api/handle-get.ts. Tokens never come from the query string.
  * CATALOGUE_CACHE_KEY (re-exported from there) is the one cache key: write
  * handlers (S-11, S-14, S-15) must remove it after changing the sheet, or the
- * old catalogue is served for up to 30 s. Photo counts are not wired yet, so
+ * old catalogue is served until the cache expires (10 minutes, D-034). Photo counts are not wired yet, so
  * photos is 0 (D-030 rule 3).
  */
 export { CATALOGUE_CACHE_KEY };
 
+/** The one catalogue builder, shared by doGet and the warm job so both cache the same body. */
+function buildCatalogue(): unknown {
+  return catalogue(activeSpreadsheet(), {
+    // Date cells arrive as midnight in the sheet's zone, so format them in that zone, not UTC (D-030 rule 6).
+    formatDate: (d) => Utilities.formatDate(d, SpreadsheetApp.getActive().getSpreadsheetTimeZone(), "yyyy-MM-dd"),
+    // The seller's number lives only in Script Properties, never in the repo (D-034 rule 4).
+    sellerWhatsapp: PropertiesService.getScriptProperties().getProperty("SELLER_WHATSAPP") ?? undefined,
+  });
+}
+
 export function doGetRun(e?: { parameter?: Record<string, string> }): GoogleAppsScript.Content.TextOutput {
   const body = handleGet(e?.parameter ?? {}, {
-    // Date cells arrive as midnight in the sheet's zone, so format them in that zone, not UTC (D-030 rule 6).
-    catalogue: () =>
-      catalogue(activeSpreadsheet(), {
-        formatDate: (d) => Utilities.formatDate(d, SpreadsheetApp.getActive().getSpreadsheetTimeZone(), "yyyy-MM-dd"),
-      }),
+    catalogue: buildCatalogue,
     cache: CacheService.getScriptCache(),
   });
   return ContentService.createTextOutput(body).setMimeType(ContentService.MimeType.JSON);
 }
 
 // tools/build-gas.mjs bundles this file as the global `A44` and appends top-level
-// `function scrubStaging()`, `function migrateSheet()` and `function doGet(e)` wrappers, because the
+// `function scrubStaging()`, `function migrateSheet()`, `function addIdColumns()`,
+// `function warmCatalogue()` and `function doGet(e)` wrappers, because the
 // editor's Run menu only lists top-level function declarations.

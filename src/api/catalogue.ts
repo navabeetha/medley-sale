@@ -36,13 +36,26 @@ export interface CatalogueOptions {
    * a midnight-IST date is the previous day in UTC. The default is the UTC date.
    */
   formatDate?: (d: Date) => string;
+  /**
+   * The seller's WhatsApp number, from Script Property SELLER_WHATSAPP (D-034
+   * rule 4). It is never in the repo. Only a wa.me URL built from its digits
+   * leaves this function; see contactUrl().
+   */
+  sellerWhatsapp?: string;
 }
+
+/**
+ * Where availability comes from (D-035). "claims": the queue engine over the
+ * Claims tab (D-030). "status": there is no Claims tab, so the item row's
+ * Status column decides.
+ */
+type Mode = "claims" | "status";
 
 /**
  * The published tabs, an allow-list (D-030 rule 9): a hidden, copied or new tab
  * is never published by accident. A new category needs a code change.
  */
-const ITEM_TABS = ["Tech", "Gym & Sport", "Home Things", "Books"];
+export const ITEM_TABS = ["Tech", "Gym & Sport", "Home Things", "Books"];
 const BOOKS = "Books";
 /** Where the brand (or on Books, the book name) and its rich-text link live. */
 const BRAND_HEADERS = ["Brand (+ Link)", "Brand"];
@@ -91,7 +104,31 @@ function readClaims(ss: Spreadsheet): ClaimInput[] {
   return out;
 }
 
-function tabItems(tab: Tab, claims: ClaimInput[], photoCounts: Record<string, number>, formatDate: (d: Date) => string): CatalogueItem[] {
+/**
+ * https://wa.me/<digits> for a seller number, or null (D-034 rule 4). Strips
+ * everything but digits, then a leading "00" international prefix. wa.me wants
+ * 8 to 15 digits (E.164 allows 15); anything else is treated as unset rather
+ * than publishing a dead link.
+ */
+function contactUrl(raw: string | undefined): string | null {
+  if (typeof raw !== "string") return null;
+  const digits = raw.replace(/\D/g, "").replace(/^00/, "");
+  return /^\d{8,15}$/.test(digits) ? `https://wa.me/${digits}` : null;
+}
+
+/**
+ * Status-mode availability (D-035). Exact-match statuses and fail closed:
+ * Sold, blank and anything unrecognised return null (the row is left out).
+ * Reserved holds the whole quantity, so freeUnits is 0.
+ */
+function statusAvailability(status: CellValue | undefined, q: number): { unitsLeft: number; freeUnits: number } | null {
+  if (!Number.isInteger(q) || q < 1) return null; // D-026: an unusable Quantity hides the row
+  if (status === "Available") return { unitsLeft: q, freeUnits: q };
+  if (status === "Reserved") return { unitsLeft: q, freeUnits: 0 };
+  return null;
+}
+
+function tabItems(tab: Tab, mode: Mode, claims: ClaimInput[], photoCounts: Record<string, number>, formatDate: (d: Date) => string): CatalogueItem[] {
   const grid = tab.getGrid();
   const hr = findHeaderRow(grid);
   if (hr < 0) return [];
@@ -109,6 +146,7 @@ function tabItems(tab: Tab, claims: ClaimInput[], photoCounts: Record<string, nu
   const fromCol = col(head, ["Available from"]);
   const notesCol = col(head, ["Notes"]);
   const qtyCol = col(head, ["Quantity"]);
+  const statusCol = col(head, ["Status"]); // read in status mode only; Person is never read
   const cell = (cells: CellValue[], c: number): CellValue | undefined => (c ? cells[c - 1] : undefined);
   const links = new Map(tab.getLinks().map((l) => [`${l.row}:${l.col}`, l.url]));
 
@@ -120,9 +158,17 @@ function tabItems(tab: Tab, claims: ClaimInput[], photoCounts: Record<string, nu
     if (!id || !name) continue;
     const quantity = cell(cells, qtyCol);
     const q = typeof quantity === "number" ? quantity : NaN;
-    const calc = recalculate({ id, quantity: q }, claims, "");
-    // Sold out is decided by Claims and Quantity, never the Status text (D-030 rule 4).
-    if (calc.unavailable || calc.soldOut) continue;
+    let avail: { unitsLeft: number; freeUnits: number; waitingCount: number };
+    if (mode === "status") {
+      const a = statusAvailability(cell(cells, statusCol), q);
+      if (!a) continue;
+      avail = { ...a, waitingCount: 0 };
+    } else {
+      const calc = recalculate({ id, quantity: q }, claims, "");
+      // Sold out is decided by Claims and Quantity, never the Status text (D-030 rule 4).
+      if (calc.unavailable || calc.soldOut) continue;
+      avail = calc;
+    }
     const price = cell(cells, priceCol);
     out.push({
       id,
@@ -136,22 +182,23 @@ function tabItems(tab: Tab, claims: ClaimInput[], photoCounts: Record<string, nu
       notes: text(cell(cells, notesCol)),
       link: linkCol ? safeLink(links.get(`${r + 1}:${linkCol}`)) : null,
       quantity: q,
-      unitsLeft: calc.unitsLeft,
-      freeUnits: calc.freeUnits,
-      waitingCount: calc.waitingCount,
+      unitsLeft: avail.unitsLeft,
+      freeUnits: avail.freeUnits,
+      waitingCount: avail.waitingCount,
       photos: photoCounts[id] ?? 0,
     });
   }
   return out;
 }
 
-export function catalogue(ss: Spreadsheet, opts: CatalogueOptions = {}): { items: CatalogueItem[] } {
+export function catalogue(ss: Spreadsheet, opts: CatalogueOptions = {}): { items: CatalogueItem[]; contactUrl: string | null } {
+  const mode: Mode = ss.getTab("Claims") ? "claims" : "status";
   const claims = readClaims(ss);
   const photoCounts = opts.photoCounts ?? {};
   const formatDate = opts.formatDate ?? utcDate;
   const items = ss
     .getTabs()
     .filter((t) => ITEM_TABS.includes(t.name))
-    .flatMap((t) => tabItems(t, claims, photoCounts, formatDate));
-  return { items };
+    .flatMap((t) => tabItems(t, mode, claims, photoCounts, formatDate));
+  return { items, contactUrl: contactUrl(opts.sellerWhatsapp) };
 }

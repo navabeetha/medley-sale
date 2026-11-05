@@ -4,8 +4,12 @@
 
 /** Cache key for the catalogue body. Write handlers (S-11, S-14, S-15) remove it. */
 export const CATALOGUE_CACHE_KEY = "catalogue";
-/** Short on purpose: a change shows up within this time even if a write forgets to clear the key. */
-export const CATALOGUE_CACHE_SECONDS = 30;
+/**
+ * 10 minutes: twice the 5-minute warm interval (D-034), so a late warm run
+ * still leaves a hit. Writes clear the key; until S-15's on-edit trigger, sheet
+ * edits by hand show within the warm interval.
+ */
+export const CATALOGUE_CACHE_SECONDS = 600;
 
 export interface GetCache {
   get(key: string): string | null;
