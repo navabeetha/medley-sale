@@ -1062,3 +1062,92 @@ Export of the scrubbed build copy in `private/build-copy.xlsx` (gitignored, D-01
 - **Rerun:** byte-identical output.
 - **Seller's contact-sheet review:** "all the products upright, in center and under their IDs. No faces." She's relaxed about incidental details in her photos (memory: privacy level). Buyer data rules are unchanged.
 - **Open:** the two shrunk photos haven't been viewed on a phone yet (to be seen at G1 on staging).
+
+## 2026-11-05: S-06 catalogue screen (D-034 browse-only)
+
+**Change:** c8e4364 (red tests; PM swapped the 1x1 WebP in `test/e2e/helpers.ts` from base64 to hex to avoid a pii-scan false positive), 0dc2a20 (`src/site/config.ts`, `src/site/view-model.ts`), 0bc7393 (`src/site/main.ts`, `public/style.css`). Branch `S-06-catalogue-screen`.
+
+**Gate (fresh `npm ci && npm run check`, QA run):** exit 0. Vitest 514 passed (23 files); Playwright 154 passed, 2 skipped (CLS is Chromium-only); 2.8 KB gzipped of 50 KB; pii-scan 188 files, 0 findings.
+
+**How probed:** temporary Playwright specs in `test/e2e/` (deleted before this commit, tree clean), run on all four projects (Chromium and WebKit, Pixel 7 and iPhone 14). Mocked API and manifest only; synthetic data only.
+
+**Verified correct:**
+- XSS: all data goes through `textContent`; no `innerHTML` in `src/site/`. The existing hostile-name test passes, and hrefs are set as properties.
+- `link` is not rendered anywhere (an item with `link: "javascript:alert(1)"` produced no anchor besides the reserve links).
+- contactUrl allow-list: `javascript:…`, `https://evil.example/`, `http://wa.me/1` and `https://wa.me.evil.example/1` all give no links. `https://wa.me/@evil.example` is accepted, but its host is still wa.me, so that's harmless.
+- Reserve text encoding: the decoded `?text=` equals `Hi! I'd like to reserve: <name>` exactly, with a single `text` parameter and no fragment, for `Pots & Pans #2`, `Lamp 🌟 big`, `50% off + more`, `a?b=c&d` and curly quotes, on both engines.
+- Bundle: `dist/main.js` contains no digits after `wa.me/` and no 10-digit run. The API URL is public by design (brief 4.2). The seller's number reaches the DOM only through the `contactUrl` href, which D-034 intends.
+- Layout: no horizontal overflow at 390 px or 320 px with 100+ character unbroken names and brands (overflow 0 on all four projects), including in the error state.
+- Tap targets: every "Message to reserve" link is 148x44 and "Try again" is 102x44. (The fallback WhatsApp link is the exception; see F3.)
+- Empty catalogue: shows "Nothing is listed right now. Please check back soon.", with no notes and no blank page.
+- Manifest 404: rows render with no `<img>`.
+- A failed refresh keeps the cached list visible, with the error box above it.
+- Non-JSON cache (`{not json`) is ignored (existing test).
+- Blocked storage works (T-14, existing tests).
+- Timeout: 20 s is fine against D-033's 13 s worst warm miss. Pinned by the 14 s and 31 s clock test.
+
+### Findings
+
+**F1, S3: list rendering waits on `photos/manifest.json`, and that fetch has no timeout.** `show()` does `await manifest` before rendering anything, both the cached list and the fresh one.
+- (a) If the manifest request stalls, nothing ever renders, even after the API has answered. The loading line stays forever, with no error and no retry. That breaks brief 7, "every failure has a retry".
+- (b) On a repeat visit the cached list waits a full manifest round trip, which weakens the AC "cached… shown right away".
+- Repro (a): route `**/photos/manifest.json` to a handler that never fulfils, mock the API `ok()`, then `goto("/")`. There are 0 rows after 8 s on all four projects.
+- Repro (b): first load normally. Then delay the manifest 3 s and make the API hang, and reload. The cached rows appear only after about 3.3 s on all four projects.
+- Suggested direction: render without photos straight away and add thumbnails when the manifest arrives, or give the manifest a short timeout.
+- Regression test needed: a manifest that hangs, with the cached and the fresh list each still rendering.
+
+**F2, S3: one malformed item poisons the cache, and every later visit is a blank page.**
+- `parseCatalogue` checks only that `items` is an array.
+- `load()` calls `writeCache(c)` before `show(c)`. If rendering then throws (for example on a `null` item), the bad data is already cached.
+- On the next visit, `void show(cached).then(() => load())` rejects, so `load()` never runs. The result is no loading line, no error box, no retry and no API request, until the user clears site data.
+- The same happens with any valid-JSON cache entry holding a non-object item.
+- Repro: mock the API as `{"items":[{"id":"I-1","name":"x"},null],"contactUrl":null}` and `goto("/")`. The fallback shows, but localStorage already holds the bad payload. `reload()` gives a page with only the h1 and the early note, and the pageerror `TypeError: null is not an object (evaluating 'o.freeUnits')` (WebKit iPhone). Changing the API to `ok()` doesn't help, because it's never called.
+- Likelihood is low (our own handler emits typed items), but there's no in-app recovery.
+- Related, S4: an item missing `freeUnits` (undefined) is silently dropped by `sortItems`, because it's in neither the `> 0` nor the `<= 0` group.
+
+**F3, S4: the fallback "Or message me on WhatsApp" link is 216x19 px**, not 44 px tall (brief 7). Repro: load once with `ok()`, then reload with `serverError`, and measure `[data-testid=catalogue-error] a` (WebKit iPhone and Pixel). It has no `.reserve`-style min-height.
+
+**F4, S4: a contactUrl that already has a query string gives a malformed link.** `https://wa.me/919000000001?text=hi` becomes `…?text=hi?text=Hi!%20I'd…`. The server is meant to send a bare URL (D-034 item 4), so this is defensive only. Either reject a `?` in the allow-list or use `URL`/`searchParams`.
+
+**F5, S4: a malformed manifest gives `src="photos/undefined"` and `alt="undefined"`.** Repro: manifest `{"I-9001":"str","I-9002":[{"thumb":"a.webp"}]}`. The manifest is our own generated file, so the risk is low.
+
+**F6, S4 (copy and decision, not a defect):**
+- On first visit with the API down, the fallback has no WhatsApp link, because the number isn't in the repo. That's deliberate and tested. D-034 item 3 says the fallback comes "with the WhatsApp link", so the PM or seller should confirm that this gap is acceptable, or pick a public alternative.
+- With a cached list on screen, the box says "We couldn't load the sale just now", while the list is visible and could be stale. Consider "Couldn't refresh; showing the last saved list."
+- **Seller to confirm the copy** the implementer wrote: "All prices negotiable." and "Books: Free for libraries and students." (from brief 6.4), and the reserve message "Hi! I'd like to reserve: <name>". Books messages carry only the name, not the author.
+- The background is `#fff`, not the brief's "warm off-white". That's pre-existing.
+
+### Coverage gaps (no test would go red)
+
+- Removing the `wa.me` allow-list in `parseCatalogue` breaks no test: there's no test with a non-wa.me `contactUrl`.
+- There is no test for manifest failure (404, hang or junk). F1 is the consequence.
+- There is no test for a valid-JSON but malformed cache or API item. F2 is the consequence.
+- No test checks the fallback link's tap target.
+
+### Screenshots (scratchpad, not in the repo; synthetic data)
+
+`<scratchpad>/shots/`:
+- 390 px list: `s06-390-webkit-iphone.png`, plus the chromium-iphone, chromium-pixel and webkit-pixel versions.
+- 320 px list with long names: `s06-320-*.png`.
+- First-visit error: `s06-390-error-*.png`.
+- Cached list with a failed refresh: `s06-390-stale-plus-error-*.png`.
+
+Reviewed by eye: no overflow, long names wrap, and status is shown as text and not by colour alone.
+
+### Manual checks still needed (live or device)
+
+- On a real phone on staging (G1): the cached list on a second visit appears with no visible wait.
+- Tapping "Message to reserve" opens WhatsApp with the prefilled text, including an item with `&` or emoji. Assert the URL only; don't send.
+- Lazy thumbnails load on scroll on iOS Safari and Android Chrome.
+
+### Not verified
+
+- Real API or staging behaviour.
+- Real photos or the real manifest (not read).
+- Contrast measured with a tool (only by eye; the colours look AA).
+- Screen-reader output.
+- CI.
+
+### Verdict
+
+**Does not pass QA yet.** There is no S1 or S2. F1 makes the AC "cached… shown right away" depend on a second network request, and a stalled manifest leaves the loading line up for good with no retry (brief 7). F2 can leave a returning visitor on a blank page with no recovery. Both are small fixes in `main.ts`, and each needs a failing test first. F3 to F6 are S4s for the PM; F6 needs the seller's copy confirmation.
