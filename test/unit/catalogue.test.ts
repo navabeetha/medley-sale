@@ -381,7 +381,9 @@ describe("catalogue: T-12 response scan (D-009, D-011)", () => {
   it("has no property named after private data", () => {
     const keys = allKeys(catalogue(sensitive()));
     expect(keys.length).toBeGreaterThan(10);
-    for (const k of keys) expect(k).not.toMatch(/^(name_?|number|phone|token|person|buyer|booking.*|claim.*|holder.*|status)$/i);
+    for (const k of keys) expect(k).not.toMatch(/^(buyer.*|person.*|name_.+|.*_name|number|phone|token|booking.*|claim.*|holder.*|status)$/i);
+    // The bare "name" key is the item name (D-030), so it is allowed; buyer-ish name keys are not.
+    expect(keys).toContain("name");
   });
 });
 
