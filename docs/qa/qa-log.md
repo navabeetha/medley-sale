@@ -676,3 +676,33 @@ Seller ran everything from the Apps Script editor. Logs are counts only. No agen
   5. Books `Brand (+ Link)` holds titles.
 - **Not checked live:** "a formula-like name shows as text". The scrubbed copy has no formula-like names, so this stays covered by unit tests only. The successful run's exact counts weren't seen.
 - **Owed:** QA review of the D-028 commits (8707627, 7382abc, the red test for `Brand (+ Link)`, and the follow-up fix).
+
+## 2026-11-05: S-03 QA of D-028 (Books name under "Brand (+ Link)")
+
+Reviewed commits 8707627, 7382abc, 42803f0, c601e07 (made inline by the PM).
+
+### Verified
+
+- Gate `npm run check`: tsc, eslint, Vitest 19 files / 408 tests passed, Playwright 16 passed, size 0.7 KB of 50 KB, pii-scan 99 files 0 findings.
+- Tests came first: at 42803f0 (red test, before c601e07) the D-028 file runs 2 failed / 3 passed, failing on `"Brand (+ Link)"`. 8707627 precedes 7382abc.
+- Fallback is Books-only: `itemNameCol` returns the `Item` match, or 0 for any tab not named `Books`. The "other tabs" test is meaningful because the Tech fixture already has a `Brand` column, so it throws only if Brand is refused.
+- `Item` preferred: the both-columns test adds an empty `Brand` column; if Brand won, the claim name would be blank and "Slow Rivers" missing.
+- Both reads of the item name in `src/api/migrate.ts` (preflight line ~277, claim build line ~462) go through `itemNameCol`. No other `ITEM_NAME_HEADERS`/`findCol` read of the name. `guardText` still wraps the item name.
+- Privacy: no real data, headings only. The live heading `Brand (+ Link)` is not personal data.
+
+### Findings
+
+- S4: on Books the preflight error still says `has no "Item" column`, though `Brand (+ Link)`/`Brand` would also do. Misleading if the seller renames it again. Not blocking.
+- S4 (coverage): no test that a formula-like book name under the Brand fallback gets the apostrophe guard. It shares the same line as the Item path, so a regression is unlikely.
+- Inherit in S-04: the catalogue API must reuse `itemNameCol` (export it, don't copy it). Other live tabs may also head the brand column `Brand (+ Link)`, and on them it is the brand, not the name. Fixtures still say `Brand` and have a separate `Link` column. Live Books has no `Link` column (the link is rich text on the name cell), so S-04 should test against a live-shaped Books fixture.
+- Inherit in S-05: live Books heads photos `Photos`, but fixtures use `Photo`. Confirm the heading on every live tab before the photo pipeline looks it up by name.
+
+### Verdict
+
+D-028 passes QA. S-03 can merge on D-028's account.
+
+### Not verified
+
+- Live data (QA must not read it). I relied on the seller's by-eye check that titles sit under `Brand (+ Link)`.
+- The headings on other live tabs beyond Tech and Books.
+- `build:gas` and the clasp bundle.
