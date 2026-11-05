@@ -157,8 +157,21 @@ def build_workbook(path, tabs: dict) -> None:
         for r, row in enumerate(spec["rows"], start=top + 2):
             for c, v in enumerate(row, start=1):
                 ws.cell(row=r, column=c, value=v)
-        for ref, data in spec.get("images", []):
-            ws.add_image(XlImage(io.BytesIO(data)), ref)
+        for entry in spec.get("images", []):
+            ref, data = entry[0], entry[1]
+            img = XlImage(io.BytesIO(data))
+            if len(entry) == 3:  # (from_ref, data, to_ref): a picture stretched over several cells
+                from openpyxl.drawing.spreadsheet_drawing import AnchorMarker, TwoCellAnchor
+                from openpyxl.utils.cell import coordinate_from_string, column_index_from_string
+
+                def marker(r):
+                    col, row = coordinate_from_string(r)
+                    return AnchorMarker(col=column_index_from_string(col) - 1, row=row - 1)
+
+                img.anchor = TwoCellAnchor(editAs="twoCell", _from=marker(ref), to=marker(entry[2]))
+                ws.add_image(img)
+            else:
+                ws.add_image(img, ref)
     wb.save(path)
 
 
