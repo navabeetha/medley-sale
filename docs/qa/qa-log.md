@@ -674,6 +674,7 @@ Seller ran everything from the Apps Script editor. Logs are counts only. No agen
   3. State validation rejects `banana`.
   4. To do and Sold render without errors, and Sold shows Total sold.
   5. Books `Brand (+ Link)` holds titles.
+- **Evidence for the re-run reading (added the same day):** the seller's Executions view shows the 17:04:44 run took 53.7 s. That alone didn't prove it was a no-op, because a no-op still calls `getGrid` once per item row. The first Claims row's `Created` is `2026-11-05T11:34:01.711Z`, which is 17:04:01 IST. That's before the 17:04:44 run started, so an earlier run did the work, and the all-zeros run was a true re-run. The counts are not wrong. Side note for S-04/S-11: per-row `getGrid` calls make migrate slow on the live sheet (S4, performance only).
 - **Not checked live:** "a formula-like name shows as text". The scrubbed copy has no formula-like names, so this stays covered by unit tests only. The successful run's exact counts weren't seen.
 - **Owed:** QA review of the D-028 commits (8707627, 7382abc, the red test for `Brand (+ Link)`, and the follow-up fix).
 
