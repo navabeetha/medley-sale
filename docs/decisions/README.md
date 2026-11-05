@@ -35,5 +35,6 @@ New decisions are recorded here, one file each: `D-016-<slug>.md`, `D-017-<slug>
 | [D-024](D-024-owner-name-out-of-public-repo.md) | Owner's name kept out of the public repo | Accepted (the seller) |
 | [D-025](D-025-push-barrier-scope.md) | Push barrier: one narrow fix, leftovers to S-17 | Accepted (the seller) |
 | [D-026](D-026-queue-promotion-rules.md) | Queue promotion rule, role source, unavailable items | Proposed |
+| [D-027](D-027-header-row-detection.md) | Item tabs' header row is found (first of the top 5 with `Person`), not assumed to be row 1 | Proposed |
 
-**Next free ID: D-027.** Update this line and the index whenever you add a decision.
+**Next free ID: D-028.** Update this line and the index whenever you add a decision.
