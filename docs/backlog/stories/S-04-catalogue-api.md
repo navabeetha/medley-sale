@@ -5,7 +5,7 @@
 | **Points** | 2 |
 | **Slice** | 1: See the sale |
 | **Depends on** | S-02, S-03 |
-| **Status** | Backlog |
+| **Status** | Ready (2026-11-05) |
 | **Pod type** | feature |
 | **Gate** | Live checks need G0.3 complete. **Stop condition:** if Apps Script can't work from Pages, stop and ask the seller (11.5) |
 | **Branch** | `S-04-catalogue-api` |

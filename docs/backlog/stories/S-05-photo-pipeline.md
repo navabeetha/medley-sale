@@ -5,7 +5,7 @@
 | **Points** | 2 |
 | **Slice** | 1: See the sale |
 | **Depends on** | S-03 |
-| **Status** | Backlog |
+| **Status** | Ready (2026-11-05) |
 | **Pod type** | feature |
 | **Gate** | Needs G0.3 and an export of the scrubbed build copy in `private/` ([D-019](../../decisions/D-019-photo-export-from-scrubbed-copy.md)) |
 | **Branch** | `S-05-photo-pipeline` |
