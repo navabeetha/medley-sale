@@ -37,6 +37,8 @@ New decisions are recorded here, one file each: `D-016-<slug>.md`, `D-017-<slug>
 | [D-026](D-026-queue-promotion-rules.md) | Queue promotion rule, role source, unavailable items | Proposed |
 | [D-027](D-027-header-row-detection.md) | Item tabs' header row is found (first of the top 5 with `Person`), not assumed to be row 1 | Proposed |
 | [D-028](D-028-books-name-under-brand.md) | On Books, the book name is the `Brand` column when there is no `Item` column | Proposed |
-| [D-030](D-030-catalogue-shape.md) | Catalogue response fields, freeUnits, injected photo count, http(s) links only | Proposed |
+| [D-029](D-029-photo-pipeline-edge-cases.md) | Photo pipeline edge cases: no upscaling, stale files removed, duplicate IDs stop the run | Proposed |
+| [D-030](D-030-catalogue-shape.md) | Catalogue response fields, freeUnits, calendar dates, JSON errors, tab allow-list, http(s) links only | Proposed |
+| [D-031](D-031-photo-pipeline-hardening.md) | Photo pipeline hardening: raw media, reported skips, empty-export guard, hard budgets | Proposed |
 
-**Next free ID: D-031.** (D-029 is on branch S-05-photo-pipeline.) Update this line and the index whenever you add a decision.
+**Next free ID: D-032.** Update this line and the index whenever you add a decision.

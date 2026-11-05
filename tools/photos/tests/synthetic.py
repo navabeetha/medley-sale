@@ -1,0 +1,409 @@
+"""Synthetic fixture generators for the photo pipeline tests.
+
+PUBLIC REPO: everything here is generated at test time from code. Nothing is
+read from a real export or a real photo (CLAUDE.md hard rule 1). People, items
+and GPS coordinates are invented ("Test Person", a point in the sea off Africa).
+"""
+from __future__ import annotations
+
+import io
+import random
+
+from openpyxl import Workbook
+from openpyxl.drawing.image import Image as XlImage
+from PIL import Image, ImageDraw
+
+# Fake GPS: 0 deg N, 0 deg E ("Null Island"), obviously not anybody's house.
+FAKE_MAKE = "SyntheticCamCo"
+FAKE_SERIAL = "SN-SYNTHETIC-12345"
+
+
+def solid_png(rgb, size=(40, 40)) -> bytes:
+    """A lossless solid-colour PNG, so tests can tell images apart by colour."""
+    buf = io.BytesIO()
+    Image.new("RGB", size, rgb).save(buf, "PNG")
+    return buf.getvalue()
+
+
+def pixel(image_bytes: bytes, xy=(5, 5)):
+    """RGB of one pixel of any decodable image bytes."""
+    return Image.open(io.BytesIO(image_bytes)).convert("RGB").getpixel(xy)
+
+
+def dominant_colour(image_bytes: bytes):
+    """Colour at the centre of the image; fixtures are solid so this is enough."""
+    im = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    return im.getpixel((im.width // 2, im.height // 2))
+
+
+def jpeg_with_gps(size=(300, 200), orientation: int | None = None) -> bytes:
+    """A JPEG carrying fake GPS, camera make/serial, an ICC-less EXIF block and XMP."""
+    im = Image.effect_noise(size, 40).convert("RGB")
+    exif = Image.Exif()
+    exif[0x010F] = FAKE_MAKE  # Make
+    exif[0xA431] = FAKE_SERIAL  # BodySerialNumber
+    if orientation is not None:
+        exif[0x0112] = orientation
+    gps = exif.get_ifd(0x8825)
+    gps[1] = "N"  # GPSLatitudeRef
+    gps[2] = (12.0, 34.0, 56.0)  # GPSLatitude
+    gps[3] = "E"  # GPSLongitudeRef
+    gps[4] = (78.0, 9.0, 10.0)  # GPSLongitude
+    buf = io.BytesIO()
+    xmp = (
+        b'<?xpacket begin="" id="W5M0MpCehiHzreSzNTczkc9d"?>'
+        b"<x:xmpmeta xmlns:x='adobe:ns:meta/'><!--SyntheticXmpMarker--></x:xmpmeta>"
+        b'<?xpacket end="w"?>'
+    )
+    im.save(buf, "JPEG", exif=exif, xmp=xmp, quality=90)
+    return buf.getvalue()
+
+
+def oriented_jpeg_left_red_right_blue(orientation: int = 6) -> bytes:
+    """Stored 200 wide x 100 tall, left half red, right half blue, EXIF orientation.
+
+    Orientation 6 means "rotate 90 degrees clockwise to display". Shown upright
+    the picture is therefore 100 wide x 200 tall, with the stored LEFT half on
+    TOP (red) and the stored RIGHT half at the BOTTOM (blue).
+    """
+    im = Image.new("RGB", (200, 100), (255, 0, 0))
+    ImageDraw.Draw(im).rectangle([100, 0, 199, 99], fill=(0, 0, 255))
+    exif = Image.Exif()
+    exif[0x0112] = orientation
+    buf = io.BytesIO()
+    im.save(buf, "JPEG", exif=exif, quality=95)
+    return buf.getvalue()
+
+
+def noisy_photo(size=(2000, 1500), seed=1) -> bytes:
+    """Photo-like stress image: blotchy low-frequency colour plus sensor-ish noise.
+
+    Pure white noise cannot be squeezed under 120 KB by any encoder, which
+    would make the budget test unsatisfiable rather than demanding. This is the
+    hard-but-realistic case.
+    """
+    rnd = random.Random(seed)
+    coarse = Image.new("RGB", (40, 30))
+    coarse.putdata([tuple(rnd.randrange(256) for _ in range(3)) for _ in range(40 * 30)])
+    big = coarse.resize(size, Image.BICUBIC)
+    noise = Image.effect_noise(size, 24).convert("RGB")
+    im = Image.blend(big, noise, 0.15)
+    buf = io.BytesIO()
+    im.save(buf, "JPEG", quality=95)
+    return buf.getvalue()
+
+
+def off_centre_subject(size=(600, 400)):
+    """Smooth blue background, one detailed saturated red/yellow subject, far right.
+
+    Returns (jpeg_bytes, subject_box). A naive centre crop (x 100..500) cuts the
+    subject (x 450..570) in half; a smart crop must keep it whole.
+    """
+    w, h = size
+    bg = Image.new("RGB", size)
+    px = bg.load()
+    for y in range(h):
+        for x in range(w):
+            px[x, y] = (20, 40 + x // 20, 120 + y // 10)  # gentle, low-detail gradient
+    box = (450, 140, 570, 260)
+    rnd = random.Random(7)
+    d = ImageDraw.Draw(bg)
+    for x in range(box[0], box[2], 6):
+        for y in range(box[1], box[3], 6):
+            colour = (230, 30, 20) if rnd.random() < 0.6 else (250, 220, 20)
+            d.rectangle([x, y, x + 5, y + 5], fill=colour)
+    buf = io.BytesIO()
+    bg.save(buf, "PNG")
+    return buf.getvalue(), box
+
+
+def is_subject_pixel(rgb) -> bool:
+    """Red/yellow subject colours; the background is blue-dominant."""
+    r, _, b = rgb
+    return r > 180 and b < 100
+
+
+def striped_midtone(size=(1400, 1000)) -> bytes:
+    """Mid-tone image with crisp 8 px stripes: detects blurring and level shifts."""
+    im = Image.new("RGB", size, (110, 120, 130))
+    d = ImageDraw.Draw(im)
+    for x in range(0, size[0], 16):
+        d.rectangle([x, 0, x + 7, size[1]], fill=(150, 160, 170))
+    buf = io.BytesIO()
+    im.save(buf, "PNG")
+    return buf.getvalue()
+
+
+def build_workbook(path, tabs: dict) -> None:
+    """Write an .xlsx with images anchored on rows.
+
+    `tabs` maps tab name -> spec:
+      {
+        "title_rows": int,          # rows above the header (title/notes)
+        "headers": [str, ...],      # header cells, starting at column A
+        "rows": [[cell, ...], ...], # data rows, directly below the header
+        "images": [(cell_ref, png_bytes), ...],  # anchored floating images
+      }
+    """
+    wb = Workbook()
+    wb.remove(wb.active)
+    for name, spec in tabs.items():
+        ws = wb.create_sheet(name)
+        top = spec.get("title_rows", 1)
+        for i in range(top):
+            ws.cell(row=i + 1, column=1, value=f"Synthetic title {i + 1}")
+        for c, h in enumerate(spec["headers"], start=1):
+            ws.cell(row=top + 1, column=c, value=h)
+        for r, row in enumerate(spec["rows"], start=top + 2):
+            for c, v in enumerate(row, start=1):
+                ws.cell(row=r, column=c, value=v)
+        for entry in spec.get("images", []):
+            ref, data = entry[0], entry[1]
+            img = XlImage(io.BytesIO(data))
+            if len(entry) == 3:  # (from_ref, data, to_ref): a picture stretched over several cells
+                from openpyxl.drawing.spreadsheet_drawing import AnchorMarker, TwoCellAnchor
+                from openpyxl.utils.cell import coordinate_from_string, column_index_from_string
+
+                def marker(r):
+                    col, row = coordinate_from_string(r)
+                    return AnchorMarker(col=column_index_from_string(col) - 1, row=row - 1)
+
+                img.anchor = TwoCellAnchor(editAs="twoCell", _from=marker(ref), to=marker(entry[2]))
+                ws.add_image(img)
+            else:
+                ws.add_image(img, ref)
+    wb.save(path)
+
+
+RED, GREEN, BLUE, YELLOW, PURPLE, ORANGE = (
+    (255, 0, 0),
+    (0, 200, 0),
+    (0, 0, 255),
+    (255, 255, 0),
+    (160, 0, 160),
+    (255, 140, 0),
+)
+
+
+def standard_workbook(path) -> dict:
+    """The main mapping fixture. Returns the expected facts for assertions.
+
+    Tech: title row 1, header row 2. ID sits in column C (not first) so code
+      that assumes column position fails. Name column is `Item`.
+      row 3 -> tech-001, 2 images (cols F and G, PURPLE then ORANGE... see below)
+      row 4 -> tech-002, 1 image
+      row 5 -> NO ID, 1 image (must be skipped and reported)
+    Home Things: 2 title rows, header on row 3 (D-027: first of top 5 rows with Person).
+      row 4 -> home-001, 1 image
+    Books: header row 2, no `Item` column, name under `Brand (+ Link)` (D-028).
+      row 3 -> book-001, 1 image
+    A stray image on a title row (Tech row 1) is also skipped and reported.
+    """
+    tabs = {
+        "Tech": {
+            "title_rows": 1,
+            "headers": ["Item", "Price", "ID", "Status", "Person", "Photos", "Extra"],
+            "rows": [
+                ["Test Camera", 50, "tech-001", "Available", None],
+                ["Test Phone", 20, "tech-002", "Available", None],
+                ["Unlabelled Thing", 5, None, "Available", None],
+            ],
+            "images": [
+                ("F3", solid_png(RED)),
+                ("G3", solid_png(GREEN)),  # second image, same row, to the right
+                ("F4", solid_png(BLUE)),
+                ("F5", solid_png(YELLOW)),  # row with no ID
+                ("F1", solid_png(PURPLE)),  # on the title row
+            ],
+        },
+        "Home Things": {
+            "title_rows": 2,
+            "headers": ["ID", "Item", "Person", "Photos"],
+            "rows": [["home-001", "Test Lamp", None]],
+            "images": [("D4", solid_png(ORANGE))],
+        },
+        "Books": {
+            "title_rows": 1,
+            "headers": ["Author", "Brand (+ Link)", "Person", "Photos", "ID"],
+            "rows": [["Test Author", "Test Novel", None, None, "book-001"]],
+            "images": [("D3", solid_png((10, 10, 10)))],
+        },
+    }
+    build_workbook(path, tabs)
+    return {
+        "tech-001": {"alt": "Test Camera", "colours": [RED, GREEN]},
+        "tech-002": {"alt": "Test Phone", "colours": [BLUE]},
+        "home-001": {"alt": "Test Lamp", "colours": [ORANGE]},
+        "book-001": {"alt": "Test Novel", "colours": [(10, 10, 10)]},
+        "skipped": [("Tech", 5), ("Tech", 1)],
+    }
+
+
+# ---------------------------------------------------------------------------
+# Helpers that rewrite the .xlsx zip itself (to plant raw media / odd anchors)
+# ---------------------------------------------------------------------------
+
+
+def rewrite_zip(src, dst, replace=None, add=None, edit_drawing=None) -> None:
+    """Copy an .xlsx, optionally replacing/adding members or editing drawing1.xml.
+
+    replace: {member_name: bytes}; add: {member_name: bytes};
+    edit_drawing: fn(xml_str) -> xml_str, applied to xl/drawings/drawing1.xml.
+    """
+    import zipfile
+
+    replace, add = replace or {}, add or {}
+    with zipfile.ZipFile(src) as zin, zipfile.ZipFile(dst, "w", zipfile.ZIP_DEFLATED) as zout:
+        for item in zin.infolist():
+            data = zin.read(item.filename)
+            if item.filename in replace:
+                data = replace[item.filename]
+            if edit_drawing and item.filename == "xl/drawings/drawing1.xml":
+                data = edit_drawing(data.decode("utf-8")).encode("utf-8")
+            zout.writestr(item, data)
+        for name, data in add.items():
+            zout.writestr(name, data)
+
+
+def first_anchor_to_absolute(xml: str) -> str:
+    """Turn the first picture's oneCellAnchor into an absoluteAnchor (no row/col)."""
+    import re
+
+    return re.sub(
+        r"<oneCellAnchor><from>.*?</from>(.*?)</oneCellAnchor>",
+        r'<absoluteAnchor><pos x="0" y="400000"/>\1</absoluteAnchor>',
+        xml,
+        count=1,
+        flags=re.S,
+    )
+
+
+def sideways_landscape_image(fmt: str) -> bytes:
+    """200x100 stored (left red, right blue) with EXIF orientation 6, in MPO or WEBP.
+
+    Shown upright it is 100x200. Both formats are ones openpyxl would re-save
+    as PNG, losing the orientation tag.
+    """
+    im = Image.new("RGB", (200, 100), (255, 0, 0))
+    ImageDraw.Draw(im).rectangle([100, 0, 199, 99], fill=(0, 0, 255))
+    exif = Image.Exif()
+    exif[0x0112] = 6
+    buf = io.BytesIO()
+    if fmt == "MPO":
+        im.save(buf, "MPO", save_all=True, append_images=[im.copy()], exif=exif)
+    else:
+        im.save(buf, "WEBP", exif=exif, lossless=True)
+    return buf.getvalue()
+
+
+def uniform_noise_png(size: int, amplitude: int = 255, seed: int = 2) -> bytes:
+    """Per-pixel uniform noise around mid-grey: the hardest thing to compress."""
+    rnd = random.Random(seed)
+    im = Image.new("RGB", (size, size))
+    half = amplitude // 2
+    im.putdata([tuple(128 + rnd.randrange(-half, half + 1) for _ in range(3)) for _ in range(size * size)])
+    buf = io.BytesIO()
+    im.save(buf, "PNG")
+    return buf.getvalue()
+
+
+def white_noise_png(size: int, seed: int = 3) -> bytes:
+    """Full-range random bytes: cannot fit 120 KB / 12 KB at any acceptable quality."""
+    im = Image.frombytes("RGB", (size, size), random.Random(seed).randbytes(size * size * 3))
+    buf = io.BytesIO()
+    im.save(buf, "PNG")
+    return buf.getvalue()
+
+
+def needs_shrinking_photo(size=(1200, 900), seed=1, alpha=0.2) -> bytes:
+    """Photo-like image whose full WebP exceeds 120 KB at the first quality step
+    (measured: needs about q54 to fit) but fits well above the q30 floor."""
+    rnd = random.Random(seed)
+    coarse = Image.new("RGB", (40, 30))
+    coarse.putdata([tuple(rnd.randrange(256) for _ in range(3)) for _ in range(40 * 30)])
+    big = coarse.resize(size, Image.BICUBIC)
+    noise = Image.effect_noise(size, 60).convert("RGB")
+    buf = io.BytesIO()
+    Image.blend(big, noise, alpha).save(buf, "PNG")
+    return buf.getvalue()
+
+
+# ---------------------------------------------------------------------------
+# ICC helpers
+# ---------------------------------------------------------------------------
+
+
+def srgb_icc() -> bytes:
+    from PIL import ImageCms
+
+    return ImageCms.ImageCmsProfile(ImageCms.createProfile("sRGB")).tobytes()
+
+
+def linear_rgb_icc() -> bytes:
+    """A tiny hand-built ICC v2 matrix/TRC profile: sRGB primaries, gamma 1.0 (linear).
+
+    Not sRGB, so converting pixels from it to sRGB must change them a lot: a
+    linear value of 64/255 is about 0.25 of full light, which sRGB encodes as
+    about 137/255. Primaries are the D50-adapted sRGB colorants (Bruce Lindbloom).
+    """
+    import struct
+
+    def s15(v):  # s15Fixed16Number
+        return struct.pack(">i", round(v * 65536))
+
+    def xyz_tag(x, y, z):
+        return b"XYZ \x00\x00\x00\x00" + s15(x) + s15(y) + s15(z)
+
+    curv = b"curv\x00\x00\x00\x00" + struct.pack(">I", 1) + struct.pack(">H", 256)  # gamma 1.0 (u8Fixed8)
+    desc_text = b"synthetic linear rgb\x00"
+    desc = b"desc\x00\x00\x00\x00" + struct.pack(">I", len(desc_text)) + desc_text + b"\x00" * (4 + 4 + 2 + 1 + 67)
+    cprt = b"text\x00\x00\x00\x00" + b"public domain\x00"
+    tags = [
+        (b"desc", desc),
+        (b"cprt", cprt),
+        (b"wtpt", xyz_tag(0.9642, 1.0, 0.8249)),
+        (b"rXYZ", xyz_tag(0.4360747, 0.2225045, 0.0139322)),
+        (b"gXYZ", xyz_tag(0.3850649, 0.7168786, 0.0971045)),
+        (b"bXYZ", xyz_tag(0.1430804, 0.0606169, 0.7141733)),
+        (b"rTRC", curv),
+        (b"gTRC", curv),
+        (b"bTRC", curv),
+    ]
+    table, body, offset = b"", b"", 128 + 4 + 12 * len(tags)
+    for sig, data in tags:
+        pad = (-len(data)) % 4
+        table += sig + struct.pack(">II", offset + len(body), len(data))
+        body += data + b"\x00" * pad
+    size = offset + len(body)
+    header = (
+        struct.pack(">I", size) + b"\x00\x00\x00\x00" + b"\x02\x10\x00\x00"  # size, cmm, v2.1
+        + b"mntr" + b"RGB " + b"XYZ " + b"\x00" * 12 + b"acsp" + b"\x00" * 4 + b"\x00" * 4 + b"\x00" * 8
+        + b"\x00" * 4 + b"\x00\x00\x00\x00"
+        + s15(0.9642) + s15(1.0) + s15(0.8249)  # PCS illuminant D50
+        + b"\x00" * 4 + b"\x00" * 16 + b"\x00" * 28
+    )
+    header = header[:128].ljust(128, b"\x00")
+    return header + struct.pack(">I", len(tags)) + table + body
+
+
+def icc_oriented_image(fmt: str, icc: bytes) -> bytes:
+    """200x100 stored, left red / right blue, EXIF orientation 6, with an ICC profile.
+
+    Upright result is 100x200 with red on top.
+    """
+    im = Image.new("RGB", (200, 100), (255, 0, 0))
+    ImageDraw.Draw(im).rectangle([100, 0, 199, 99], fill=(0, 0, 255))
+    exif = Image.Exif()
+    exif[0x0112] = 6
+    buf = io.BytesIO()
+    if fmt == "JPEG":
+        im.save(buf, "JPEG", exif=exif, icc_profile=icc, quality=95)
+    elif fmt == "PNG":
+        im.save(buf, "PNG", exif=exif, icc_profile=icc)
+    elif fmt == "WEBP":
+        im.save(buf, "WEBP", exif=exif, icc_profile=icc, lossless=True)
+    elif fmt == "MPO":
+        im.save(buf, "MPO", save_all=True, append_images=[im.copy()], exif=exif, icc_profile=icc)
+    else:
+        raise ValueError(fmt)
+    return buf.getvalue()

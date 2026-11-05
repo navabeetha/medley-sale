@@ -1,14 +1,20 @@
 # Status board
 
-*Maintained by the PM and updated after every story. Last updated: 2026-11-05 (S-03 Done and merged).*
+*Maintained by the PM and updated after every story. Last updated: 2026-11-05 (S-04 and S-05 merged; live checks pending).*
 
 **Scope:** MVP only (brief Section 8), 43 points in 4 slices, worked in order.
-**Now:** S-01, S-02 and S-03 Done. S-03 merged to `main` 2026-11-05 after the live run on the build copy: scrub (after [D-027](../decisions/D-027-header-row-detection.md), header row found, not assumed), seller's by-eye check, migrate (after [D-028](../decisions/D-028-books-name-under-brand.md), Books name under `Brand (+ Link)`) and all five post-migrate checks passed. Agents may now read the scrubbed build copy.
+**Now:** S-01, S-02 and S-03 Done. S-04 (catalogue API, [D-030](../decisions/D-030-catalogue-shape.md)) and S-05 (photo pipeline, [D-029](../decisions/D-029-photo-pipeline-edge-cases.md), [D-031](../decisions/D-031-photo-pipeline-hardening.md)) passed QA (several fix rounds, see the qa-log) and are merged to `main` 2026-11-05. **Neither is Done until its live checks pass.** The S-04 script is pushed to the build copy (2026-11-05 17:49).
 
-**Resume here:** start S-04 (catalogue API) and S-05 (photo pipeline); they can run in parallel (different files). Carry forward from QA:
-- **S-04:** export and reuse `itemNameCol` and `findHeaderRow`. Other live tabs may also head their brand column `Brand (+ Link)` (there it means the brand). Live Books has no `Link` column: the link is rich text on the name cell, so build a Books fixture shaped like the live tab. R1 (scrub WARNING is a log line only) should be fixed before S-04 relies on the copy.
-- **S-05:** live Books heads the photo column `Photos`, not `Photo`; check every live tab's heading. Needs the seller's `.xlsx` export of the scrubbed copy into `private/` (runbook G0.3 step 4, D-019), asked for when S-05 starts.
-- Open S4 follow-ups: D-028 error wording on Books; formula-guard test for the Brand fallback; F-A to F-D and R2 to R6 in the qa-log.
+**Resume here:**
+- **S-04:**
+  - Waiting for the seller to deploy the web app (Deploy > New deployment > Web app, Execute as Me, access Anyone) and paste the `/exec` URL.
+  - Then the PM runs the live checks in the S-04 QA entries: CORS from the Pages origin (the D-001 go or no-go), cold and warm timings recorded per D-020, dates exactly `2026-12-02`, cache, links.
+  - The seller reads the JSON once by eye for real names in Notes (QA F2).
+- **S-05:**
+  - Waiting for the seller's `.xlsx` download of the scrubbed build copy into `private/`.
+  - Then the live checks in the S-05 QA entries: media extensions and AlternateContent count (numbers only), `npm run photos`, the seller's contact-sheet review (upright, right ID, crops, no people, names or addresses), gate on the real output, rerun unchanged.
+- **Open S4 follow-ups:** D-028 error wording; 16-bit greyscale; broken rels traceback; Python 3.9 end of life; CLI cwd-relative paths (accepted); migrate's per-row `getGrid` slowness; `doGet` cache/ContentService outside the try; silent `unavailable` errors; F-A to F-D and R2 to R6.
+- **Carry to S-06/S-08:** treat a non-JSON or `{"error"}` response as "API down"; the photo count comes from `public/photos/manifest.json` (D-030 rule 3); lazy loading. **S-11, S-14 and S-15** must clear `CATALOGUE_CACHE_KEY`.
 
 **Live headings (Books row 2):** Author, Brand (+ Link), Available from, Status, Price, Photos, (blank), (blank), Notes, Person.
 
@@ -33,7 +39,7 @@ G0 is staged per [D-018](../decisions/D-018-g0-in-stages.md). Steps: [docs/runbo
 
 | Backlog | Ready | In progress | In QA | Done |
 |---|---|---|---|---|
-| S-06 to S-18 | none | S-04, S-05 | none | S-01, S-02, S-03 |
+| S-06 to S-18 | none | none | S-04, S-05 (merged; live checks pending) | S-01, S-02, S-03 |
 
 ## Slices
 
@@ -52,8 +58,8 @@ G0 is staged per [D-018](../decisions/D-018-g0-in-stages.md). Steps: [docs/runbo
 | [S-01](stories/S-01-scaffold-ci-pages.md) | Scaffold, CI and Pages deploy | 2 | 1 | none | Done (QA signed off; deploy verified 2026-11-03) | G0.1 done |
 | [S-02](stories/S-02-queue-engine.md) | Queue engine with quantity | 5 | 1 | S-01 | Done (QA signed off) | |
 | [S-03](stories/S-03-sheet-schema-migration.md) | Sheet schema and migration | 3 | 1 | S-01 | Done (QA signed off; live checks passed 2026-11-05) | G0.3 done |
-| [S-04](stories/S-04-catalogue-api.md) | Catalogue API | 2 | 1 | S-02, S-03 | In progress | D-001 go or no-go |
-| [S-05](stories/S-05-photo-pipeline.md) | Photo pipeline | 2 | 1 | S-03 | In progress | Export after G0.3 |
+| [S-04](stories/S-04-catalogue-api.md) | Catalogue API | 2 | 1 | S-02, S-03 | In QA: merged, live checks pending | D-001 go or no-go |
+| [S-05](stories/S-05-photo-pipeline.md) | Photo pipeline | 2 | 1 | S-03 | In QA: merged, live run pending | Export after G0.3 |
 | [S-06](stories/S-06-catalogue-screen.md) | Catalogue screen | 3 | 1 | S-04 | Backlog | |
 | [S-07](stories/S-07-filter-search.md) | Filter and search | 1 | 1 | S-06 | Backlog | |
 | [S-08](stories/S-08-item-view.md) | Item view | 2 | 1 | S-05, S-06 | Backlog | |

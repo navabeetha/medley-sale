@@ -85,3 +85,22 @@ Before starting: S-17 is Done (all T-01 to T-18 pass, budgets met, no S1 or S2 o
 **Text fixes for approval (brief 6.4):** "Bandminton" → "Badminton", "camr" → "came", "stil" → "still", "renovable" → "removable", "Phillips" → "Philips".
 
 **Rollback (draft):** if step 3 or 6 goes wrong, restore from the step 1 backup and tell the group the pause continues. To be detailed in S-18.
+
+---
+
+## Photos: run the photo tool (S-05)
+
+One-time setup, from the repo folder (needs Python 3.9 or newer):
+
+```
+python3 -m venv tools/photos/.venv
+tools/photos/.venv/bin/pip install -r tools/photos/requirements.txt
+```
+
+Each time the sheet's photos change, export the build copy as `.xlsx` into `private/` and run:
+
+```
+npm run photos private/<your-export>.xlsx
+```
+
+It rewrites `public/photos/` (thumbnails, full images and `manifest.json`; anything no longer in the sheet is removed) and writes `private/contact-sheet.jpg` for you to check the crops. It prints counts and any skipped images (tab and row only). If two rows share an ID it stops and writes nothing. Then commit `public/photos/` and push. Never commit anything from `private/`.

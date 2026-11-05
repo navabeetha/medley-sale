@@ -794,3 +794,242 @@ F1, F3 and F4 are fixed, and the F5 guards bite. **S-04 code passes QA and can m
 
 - Everything on real Apps Script: CORS, timings, `Utilities.formatDate` output, the CacheService size limit, and error-page behaviour.
 - The `doGet` adapter itself, which has no unit test (by convention). I checked it by reading only.
+
+## 2026-11-05: S-05 QA of the photo pipeline (T-16)
+
+Reviewed commits 2340bc8 (red tests), 517c28c (D-029), b7dfba4 (pipeline, CLI, `npm run photos`, runbook) and a9cbe8f (D-029 edge-case tests), against S-05, brief 7.1 and 8.1, and D-019, D-027, D-028 and D-029. All probes used synthetic images and workbooks generated in a scratch folder. Nothing in `private/` was opened or run.
+
+### Verified
+
+- Gate: `npm ci && npm run check` passed. tsc, eslint, Vitest 19 files / 408 tests, Playwright 16 passed, size 0.7 KB of 50 KB, pii-scan 106 files with 0 findings (no blocked words configured locally). `npm run test:photos`: 33 passed, and 5 more runs were also green (no flakiness).
+- Red first for the core: 2340bc8 adds the tests with no `pipeline.py`, and b7dfba4 adds the code. The D-029 edge-case tests (a9cbe8f) came **after** the code that implements them (see findings).
+- **T-16 metadata strip, beyond the shipped tests.** Each output's RIFF chunks were only `VP8 `, with no EXIF, XMP, ICCP or marker bytes and an empty `info` (only Pillow's decoder defaults, `loop` and `background`). Sources tried:
+  - a PNG with tEXt, iTXt, zTXt, eXIf (with GPS) and iCCP;
+  - a JPEG with EXIF (make, GPS, MakerNote 0x927C), XMP, an IPTC APP13 segment, a COM comment and ICC APP2;
+  - a WebP with EXIF, XMP and ICCP chunks.
+- Contact sheet: labels are `<ID> #n` only. `run()` refuses a sheet path inside the output folder. The CLI writes it to `private/contact-sheet.jpg`, and `private/` is gitignored. The CLI prints counts, tab names, row numbers and IDs, never other cell text.
+- Stale removal is a non-recursive `out_dir.glob("*.webp")`. Nested files, non-WebP files and files outside the folder survive (tested, and the mutant using `rglob` is caught).
+- Formats through `process()`: RGBA and P-with-transparency are flattened onto **white**. A CMYK JPEG keeps its colour. An animated GIF uses its first frame. 1-bit images and 12 MP JPEGs are fine.
+- Budgets: a realistic noisy 2000×1500 photo meets them at the first quality (thumb q80 about 6 KB, full q82 about 56 KB). `tools/size-budget.mjs` naming is compatible: `<id>-<n>-thumb.webp` is checked at 12 KB, `<id>-<n>.webp` and `manifest.json` at 120 KB, and the check fails on over-budget files of both kinds. IDs containing "thumb" are renamed (`thmb`).
+- System tabs (Claims, To do, Sold, Bookings) have no `Person` or `ID` header, so the pipeline ignores them. The duplicate-ID check can't trip on Claims' `Item ID`.
+- The S-03 "Photos vs Photo" heading concern doesn't apply: images map by anchor row, not by column.
+- Smart crop on portrait items (synthetic scenes). At 3:4, the subject was kept 100% in all 5 scenes, including over a textured floor. At 9:16 a busy floor pulled the window down and cut 12% off the top of a subject near the top. That's acceptable, and it's what the contact sheet is for.
+
+### Mutation results (29 mutants, each in a fresh copy)
+
+- **Caught (20):** skipping `exif_transpose`; passing icc/exif to save; dropping stale removal; recursive stale removal; anchor row −1 and +1; centre crop instead of smart; upscaling; full autocontrast (divides by zero on flat images); header search of 1 row; no duplicate check; writing before the duplicate check; no thumb rename; no contact-sheet guard; alt = ID; no Books fallback; the CLI printing alt text; a longest side of 1024.
+- **Survived (9):**
+  - Removing both `info.clear()` calls. This is equivalent on Pillow 11.3, which saves WebP metadata only from explicit arguments. The output-level T-16 assertions would still catch a Pillow that changed this.
+  - **Budget loop never shrinks, full budget doubled, thumb budget doubled.** No test input is big enough to need a second quality step, so the loop is untested.
+  - Skipping ICC→sRGB conversion.
+  - Flattening onto black instead of white.
+  - **No levels at all.** Only "levels are light" is tested, never "levels do something".
+  - Ignoring the column in the left-to-right sort. The fixture inserts images in column order, so the test passes anyway.
+  - Allowing an image on the header row itself. Only a title-row image is tested.
+  - Header search of 6 rows.
+  - Contact sheet labelled with item names instead of IDs (private file, low stakes).
+
+### Findings (worst first)
+
+No S1 or S2 found.
+
+1. **S3, orientation lost for non-JPEG/PNG/GIF media.** `extract_images` uses openpyxl's `img._data()`, which re-encodes any other format to PNG and drops EXIF. Reproduced: an MPO (what Pillow calls a JPEG carrying an MPF block, which is common for recent phone photos) with orientation 6 comes out 200×100 (sideways) via the xlsx, but 100×200 when passed to `process()` directly. A WebP with orientation fails the same way. Whether Google's export contains such files is **unconfirmed** (live check 1). Suggested fix: read the raw bytes from the zip (`xl/media/...` via the drawing rels) instead of `_data()`. Metadata stays safe either way, because the output is re-encoded.
+2. **S3, `absoluteAnchor` crashes the run.** It raises `AttributeError: 'AbsoluteAnchor' object has no attribute '_from'` as a traceback (reproduced). It fails loudly and writes nothing. It should be skipped and reported like the others.
+3. **S3, images can disappear silently.**
+   - Media that Pillow can't decode (EMF/WMF, garbage) is dropped by openpyxl with only a Python `UserWarning`, and isn't in `skipped` or the counts (reproduced).
+   - Images placed *in* a cell (Excel/Sheets "image in cell", stored as richData) aren't seen by openpyxl at all (not reproduced, suspicion based on openpyxl's scope). The brief says floating images and the audit confirmed anchors, so this applies only if the seller uses in-cell images.
+   - Suggested fix: compare the number of `xl/media/*` files with the number extracted, and report the difference.
+4. **S3, an export with no images wipes `public/photos/`.** Reproduced: a run on a workbook with 0 images deletes every existing photo and writes `{}`, reporting only "0 photos … (2 stale files removed)". Git can restore them, and the seller reviews the diff before pushing, but a wrong export, such as one converted without images, would unpublish everything. Suggest refusing when 0 images are found, or when a large share would be removed, unless forced.
+5. **S4, over-budget output is silent.** If the quality loop reaches q2 without fitting, `_encode_webp` returns the last (over-budget) bytes with no error. Reproduced with synthetic noise at 1000×1000: 287 KB and 219 KB. The CLI says success, and `npm run size` catches it at `check`. Realistic photos fit at the first step, so this is unlikely. It also has no quality floor, so a hard image could silently drop to very low quality. Suggest raising when the budget isn't met.
+6. **S4, D-028 deviation.** `_read_tab` falls back to `Brand (+ Link)`/`Brand` for alt text on **every** tab. D-028 rule 3 says other tabs never fall back to Brand. This only matters on a non-Books tab with no `Item` column, so the impact is alt text only.
+7. **S4, 16-bit greyscale PNG clips to white** (`I;16` to RGB with no scaling, reproduced). 16-bit RGB PNGs open as 8-bit RGB in Pillow, so they aren't affected. Unlikely in a Sheets export.
+8. **S4 (process), the D-029 tests came after the code.** b7dfba4 implements D-029 rules 1 and 3–5, and a9cbe8f adds their tests afterwards, so they were never red. The DoD asks for tests first. The mutants above show they do constrain the code.
+9. **S4, the CLI paths are relative to the working directory.** `npm run photos` runs from the repo root, so it's fine. Running `python tools/photos/pipeline.py` from another folder would create `public/photos` and `private/` there.
+10. Note, out of scope: the pipeline publishes every anchored image on an item row, whatever its column (Notes, Person). It does no content checks, so a photo showing a face, a name label, a house number or a receipt would be published. The contact-sheet review is the only control. Ask the seller to look for people and addresses as well as crops.
+
+### Coverage gaps
+
+These behaviours have no test that would fail on regression: the budget quality loop (finding 5); flattening onto white; ICC→sRGB; levels actually being applied; left-to-right order when images aren't inserted in column order; an image on the header row itself; absolute anchors; dropped or unreadable media; contact-sheet labels being IDs only.
+
+### CI recommendation
+
+Make D-029 rule 6 explicit and add a CI step now. The suite is fast (about 2 s) and has no network or real-data dependency:
+
+- `actions/setup-python@v5` with `python-version: "3.9"`, matching the pin;
+- `pip install -r tools/photos/requirements.txt`;
+- `python -m pytest tools/photos -q`.
+
+Keep it out of `npm run check` if a local venv shouldn't be required, but run it in `ci.yml` beside `check`. Consider splitting pytest into a dev-only requirements file.
+
+### Verdict
+
+S-05 **passes QA** for merge. The acceptance criteria are met: the output matches 7.1, the GPS-removal fixture test exists and is strong, and the contact sheet is produced outside `public/`. T-16 holds across every metadata container tried. Findings 1–4 are S3 and should be fixed (each starting with a failing test) **before the seller's first real run**, or that run should be checked as in live checks 1–3. They don't block merging, because the tool hasn't been run on real data yet.
+
+### Live checks needed (on the seller's real export of the scrubbed build copy)
+
+1. The seller runs `unzip -l private/<export>.xlsx | grep xl/media` and reports **only the file extensions and their count**. Any `.mpo`, `.webp`, `.tif`, `.bmp`, `.emf` or `.wmf` means findings 1 and 3 apply. Also check whether `xl/richData/` exists (in-cell images).
+2. The seller runs `npm run photos private/<export>.xlsx`. The printed photo count should match the photos she knows of (the audit says 31), with no Python warnings, no traceback and an expected skipped list.
+3. The seller opens `private/contact-sheet.jpg` and checks that every photo is upright (portrait items look portrait), the crop keeps the item, no thumbnail shows a person, a name or an address, and every item with photos appears.
+4. `git status`/`git diff --stat public/photos` shows only `.webp` files and `manifest.json`, and `npm run check` passes (the size budget on the real output).
+5. A second run changes nothing in git (determinism on real data).
+
+### Not verified
+
+- Real Google Sheets export structure (anchor types and offsets, media formats, in-cell images): QA must not open it.
+- Visual quality of levels and crops on real photos.
+- Display of photos in the site (S-06, S-08, out of scope).
+- Pillow and openpyxl versions other than the pins, and Python versions other than 3.9.6.
+- Decompression-bomb-sized images (over 89 MP).
+- Behaviour when `public/photos` is a symlink.
+
+## 2026-11-05: S-05 QA re-check of D-031 hardening (4f383aa, a35dcac, b60b944)
+
+All probes used synthetic workbooks in a scratch folder. Nothing in `private/` was opened or run.
+
+### Verified
+
+- Gate: `npm run check` is green (Vitest 408, Playwright 16, size 0.7 KB, pii-scan 111 files, 0 findings). `npm run test:photos`: 55 passed, with 1 harmless openpyxl `UserWarning`.
+- Red first: at a35dcac, 11 failed and 44 passed.
+- Earlier findings 1–6 are fixed. Each was reproduced first and is now green:
+  1. MPO and WebP in the xlsx keep their orientation; raw bytes are now read from `xl/media`.
+  2. An `absoluteAnchor` picture goes into `skipped` and the run continues.
+  3. Undecodable media is skipped with a reason, and extra unreferenced media is counted in `unplaced_media`.
+  4. A zero-image export refuses to run when photos are already published.
+  5. The quality floor is 30, and the run raises rather than write an over-budget file. Synthetic noise now stops with "does not fit 120 KB even at quality 30".
+  6. The Brand fallback for alt text applies to Books only.
+- T-16 still holds on the raw-bytes path, end to end through `run()`. The output had only `VP8 ` chunks, no marker bytes and no metadata in `info` for every container tried:
+  - a PNG with tEXt, iTXt, zTXt, eXIf (GPS) and iCCP;
+  - a JPEG with EXIF (MakerNote, GPS), XMP, IPTC APP13, COM and ICC;
+  - a WebP with EXIF, XMP and ICCP;
+  - an MPO with EXIF, a MakerNote and ICC;
+  - a TIFF with an ImageDescription, EXIF and ICC;
+  - a GIF with a comment.
+- Zip path traversal: `ZipFile.read` only reads entries inside the archive. A rel target can only be read as an image if it names an `xl/media/` entry. Targets tried:
+  - `../../../../etc/passwd`, `../sharedStrings.xml` and an external `file:///etc/passwd` raise `KeyError` (from openpyxl's own load in `map_to_items`). The run stops with a traceback and writes nothing. No host file is read.
+  - A literal entry named `xl/media/../sharedStrings.xml` holding non-image bytes is skipped as undecodable.
+- CI: a `photos` job on Python 3.9 with pip caching keyed on `requirements.txt`, running `pytest`. Workflow permissions stay `contents: read`, and the job needs no secrets.
+- Mutants: 25 run against b60b944, 21 caught. All 9 survivors from the first review except ICC→sRGB are now caught.
+
+### Findings (worst first)
+
+1. **S2 (blocks merge), orientation is lost whenever the image also has an ICC profile.** `process()` calls `_to_srgb()` before `ImageOps.exif_transpose()`. `ImageCms.profileToProfile` returns a new image without the EXIF, so the transpose does nothing.
+   - Reproduced: a JPEG with orientation 6 and no ICC comes out (100, 200), which is correct. With an sRGB ICC it comes out (200, 100), sideways. Through `run()`, PNG, JPEG, WebP and MPO sources with ICC plus orientation all came out unrotated.
+   - Phone cameras embed both an ICC profile (for example Display P3) and an orientation tag, and the audit says the photos are mostly portrait. So if the export keeps original bytes, most rotated photos would ship sideways.
+   - This bug was present at the first review and I missed it: my metadata probes had both ICC and orientation, but I checked only metadata, not dimensions.
+   - Fix: transpose first, or carry the EXIF across. Start with a failing test: orientation 6 plus ICC gives a portrait image.
+   - Rated S2 rather than S3 because brief 7.1 says "respect orientation", so the acceptance criterion isn't met for typical phone photos.
+2. **S3 (blocks merge), a test artefact is committed under `public/photos/`.** b60b944 adds `public/photos/manifest.json` (`tech-001`, alt `Zebra Lamp Secret Name`), `tech-001-1.webp` and `tech-001-1-thumb.webp`. These are the synthetic CLI-test fixture, apparently produced by running the CLI by hand from the repo root, and the commit message doesn't mention them.
+   - Not real data, so not S1. But `build.mjs` copies `public/` to `dist/`, so the junk would deploy to Pages.
+   - It also means the first real run will treat it as "already published" content.
+   - Remove the files, and consider a test or pii-scan rule against fixture names under `public/`.
+3. **S4, a picture wrapped in `mc:AlternateContent` is reported as "absolute anchor".** Its `from` element is nested, so the scan doesn't find it. It's skipped visibly rather than silently, but the reason is wrong. Whether Sheets exports pictures this way is unknown.
+4. **S4, a broken rels target crashes with a traceback.** It's a `KeyError` from openpyxl, not a clean "Stopped:" message. It's loud and writes nothing.
+5. **S4 (coverage), some mutants survive:**
+   - skipping ICC→sRGB (the conversion is never tested, which is how finding 1 hid);
+   - letting a header-row image through (`row <= header` changed to `<`): the new header-row test passes anyway, probably because the row has no ID;
+   - a quality floor of 50 instead of 30;
+   - the CLI ignoring `--allow-empty`.
+6. **S4, CI pins Python 3.9, which reached end of life in October 2025.** setup-python may eventually drop it. Plan a move to 3.12 together with the pins.
+7. Still open from the first review: finding 7 (16-bit greyscale clips to white) and finding 9 (cwd-relative paths, accepted by the PM).
+
+### Verdict
+
+**Does not pass.** Return S-05 to the dev for findings 1 and 2, each starting with a failing test (finding 2 needs a guard). D-031's rules are otherwise correctly implemented and tested.
+
+### Live checks needed
+
+Unchanged from the first S-05 entry, plus:
+
+- On the contact sheet, every photo the seller knows to be portrait must be portrait.
+- The seller reports whether `unplaced_media` and `skipped` are empty.
+
+### Not verified
+
+- Real export structure.
+- Python versions other than 3.9.6.
+- A real CI run of the new job (it hasn't been pushed).
+
+## 2026-11-05: S-05 QA second re-check (4f87f80, 9fb7270)
+
+All probes used synthetic files in a scratch folder. Nothing in `private/` was opened or run.
+
+### Verified
+
+- Gate: `npm run check` is green (Vitest 408, Playwright 16, size 0.7 KB, pii-scan 109 files, 0 findings). `npm run test:photos`: 70 passed. Red first: at 4f87f80, 9 failed and 61 passed. `git ls-files public/photos` is empty.
+- **The ICC plus orientation fix works.** A JPEG with orientation 6 and an sRGB profile now comes out upright (100, 200). Through `run()`, PNG, JPEG, WebP and MPO sources with a profile and orientation 6 all come out 400×300.
+- **T-16 still holds with rotation running first.** Rotation keeps the source's EXIF and profile in memory, but the later steps clear them before saving. Every output from the earlier probe set had only `VP8 ` chunks, no marker bytes and no metadata in `info`:
+  - PNG with tEXt, iTXt, zTXt, eXIf and iCCP;
+  - JPEG with EXIF (maker note, GPS), XMP, IPTC, a comment and ICC;
+  - WebP with EXIF, XMP and ICCP;
+  - MPO, TIFF and GIF.
+- Path-traversal probes behave as before: reads stay inside the archive, and bad targets stop the run with a `KeyError`.
+- Mutants: 27 run against 9fb7270, 26 caught. All four survivors from the last re-check are now killed (ICC→sRGB, the header-row image, a quality floor of 50, the CLI ignoring `--allow-empty`). Putting the colour conversion back before rotation is caught by 9 tests.
+  - In my scratch copies, `test_no_synthetic_fixture_output_is_tracked_under_public_photos` also fails, because the copy isn't a git repo, so it fails closed. I counted a mutant as caught only when a second, specific test failed too.
+- Header-row mutant: I **accept** that it is killed only by the reason text. With `<` instead of `<=`, the picture on the header row still isn't published; it falls through to "no ID in this row", because `_read_tab` only records rows below the header. The outcome is the same, and the reason is the only observable difference. The seller acts on that reason text, so asserting on it is legitimate.
+- The fixture guard test can't trip on real output: real IDs are `I-NNNN`, and none of the fixture prefixes match them.
+
+### Findings
+
+1. **S3, an `mc:AlternateContent` picture can land on the wrong row.** `_scan` takes the picture (`blip`) from anywhere inside the wrapper, but the row from the **first** nested `from`. Each wrapper is one element, so there is **no double counting**: one picture per wrapper, whichever branches contain it. Probes:
+   - Choice and Fallback the same: correct row.
+   - Choice at row 3, Fallback at row 4: Choice row 3 is used, which is correct (Choice is the preferred branch).
+   - **Choice holds a non-picture shape anchored at row 5, Fallback holds the picture at row 3: the picture is attached to the row 5 item (`t-003`).** Wrong item, and nothing reports it.
+   - Choice holds an absolute-anchored picture, Fallback a picture at row 4: placed on row 4.
+
+   The new code has no test: the mutant that reverts to a direct-child `from` survives, apart from the scratch-copy artefact above. Fix: take the `from` from the same anchor element that contains the picture, with a test. How likely this is depends on whether the export uses `AlternateContent` at all (live check below). Without it, the bug can't trigger.
+2. Still open, S4, not blocking: 16-bit greyscale clips to white; a broken rels target gives a traceback; Python 3.9 is end of life; cwd-relative paths are accepted by the PM.
+
+### Verdict
+
+**Passes QA for merge.** Both blockers from the last re-check are fixed and tested, and T-16 holds. Finding 1 is S3. It doesn't block merge, because the tool hasn't run on real data. But it should be fixed, starting with a failing test, **before the seller's first real run, unless live check 1 shows no `AlternateContent`**.
+
+### Live checks needed
+
+As in the first S-05 entry, plus:
+
+1. The seller runs `unzip -p private/<export>.xlsx 'xl/drawings/*.xml' | grep -c AlternateContent` and reports only the number. If it's 0, finding 1 can't occur.
+2. On the contact sheet, every portrait photo is upright, and each photo sits under the right ID.
+
+### Not verified
+
+- Real export structure.
+- A real CI run of the `photos` job (nothing has been pushed).
+- Python versions other than 3.9.6.
+
+## 2026-11-05: S-05 QA third re-check (e3a2f11, 05f3bf5)
+
+All probes used synthetic files in a scratch folder. Nothing in `private/` was opened or run.
+
+### Verified
+
+- Gate: `npm run check` is green (Vitest 408, Playwright 16, size 0.7 KB, pii-scan 110 files, 0 findings). `npm run test:photos`: 75 passed.
+- Red first: at e3a2f11, the two new AlternateContent tests fail. A third test also fails in my scratch copy, but only because the copy isn't a git repo.
+- **The AlternateContent row bug is fixed.** In `ac.py`, the case of a non-picture shape in Choice at row 5 and the picture in Fallback at row 3 now places the picture on **row 3** (`t-001`). The other cases:
+  - Choice and Fallback the same: row 3, one image.
+  - Choice at row 3, Fallback at row 4: row 3, one image.
+  - Choice holds an absolute-anchored picture: skipped as an absolute anchor. Choice is preferred, so the Fallback is ignored, which is acceptable.
+- **No double counting.** Extra probes in `ac2.py`:
+  - Distinct pictures in Choice and Fallback: only the Choice picture is placed, and the unused Fallback media counts as `unplaced_media` = 1.
+  - Two pictures in Choice and one in Fallback: both Choice pictures are placed, each on its own row.
+  - An empty first Choice followed by a second Choice with a picture: the second Choice is used.
+- **T-16 still holds.** `meta.py` and `recheck.py` were re-run (PNG, JPEG, WebP, MPO, TIFF, GIF). Every output had only `VP8 ` chunks, no marker bytes and no metadata in `info`. `icc_orient.py` is upright with and without a colour profile. The path-traversal probes are unchanged.
+- **Mutants: 31 run against 05f3bf5, 30 caught.** That's the mut3 set plus five new AlternateContent mutants: no `break`, Fallback first, ignoring the picture check, skipping the wrapper, and reverting to a nested `from`. I counted a mutant as caught only when a specific test failed, not just the scratch-copy git artefact.
+- The one survivor, reverting the row lookup to a nested-`from` search, is **equivalent** now. `_anchors` yields the picture's own anchor, and that anchor's first `from` (in document order) is its own direct child, so the nested search can't reach a neighbour's.
+
+### Findings
+
+No new findings. Open S4s carried over, not blocking: 16-bit greyscale clips to white; a broken rels target gives a traceback; Python 3.9 is end of life; cwd-relative paths are accepted by the PM.
+
+### Verdict
+
+**Passes QA for merge.** No S1, S2 or S3 open.
+
+### Live checks needed
+
+As in the earlier S-05 entries: report the media extensions and the `AlternateContent` count; run `npm run photos` and report the counts, `skipped` and `unplaced_media`; review the contact sheet for orientation, crops, the right ID under each photo, and no people, names or addresses; run `npm run check` on the real output; a second run should change nothing.
+
+### Not verified
+
+- Real export structure.
+- A real CI run of the `photos` job (nothing has been pushed).
+- Python versions other than 3.9.6.
