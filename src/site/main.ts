@@ -11,7 +11,6 @@ interface Photo { thumb: string; alt: string }
 
 const CACHE_KEY = "medley-sale:catalogue:v1";
 const MANIFEST_KEY = "medley-sale:manifest:v1";
-const MANIFEST_TIMEOUT_MS = 3_000; // the list never waits on photos (F1)
 const TIMEOUT_MS = 20_000; // D-033: warm misses reach 13 s; give up well after that
 const WA_PREFIX = "https://wa.me/";
 
@@ -101,12 +100,10 @@ function readManifestCache(): Manifest {
   }
 }
 
-/** Short timeout; any failure means "no new manifest" (rows just keep whatever thumbnails they have). */
+/** No timeout (F8): the list never waits on photos, so a slow manifest just fills in late. Null on failure. */
 async function fetchManifest(): Promise<Manifest | null> {
-  const ctl = new AbortController();
-  const timer = setTimeout(() => ctl.abort(), MANIFEST_TIMEOUT_MS);
   try {
-    const res = await fetch("photos/manifest.json", { signal: ctl.signal });
+    const res = await fetch("photos/manifest.json");
     const m: unknown = res.ok ? await res.json() : null;
     if (!m || typeof m !== "object" || Array.isArray(m)) return null;
     try {
@@ -117,8 +114,6 @@ async function fetchManifest(): Promise<Manifest | null> {
     return m as Manifest;
   } catch {
     return null;
-  } finally {
-    clearTimeout(timer);
   }
 }
 
@@ -141,6 +136,7 @@ function start(root: HTMLElement): void {
   let photos: Manifest = readManifestCache(); // last good manifest: repeat visits show thumbnails at once
   let contactUrl: string | null = null;
   let hasList = false;
+  let manifestSettled = false; // empty photo slots are removed only once the manifest has arrived or failed
 
   // Puts a thumbnail in (or takes an empty slot out of) every row, using the current manifest.
   function applyPhotos(): void {
@@ -153,7 +149,7 @@ function start(root: HTMLElement): void {
         const s = el("span", undefined, "slot");
         fillSlot(s, photo);
         li.prepend(s);
-      } else if (slot && !slot.firstChild) slot.remove();
+      } else if (slot && !slot.firstChild && manifestSettled) slot.remove();
     }
   }
 
@@ -170,6 +166,7 @@ function start(root: HTMLElement): void {
       if (items.some((i) => i.tab === "Books")) lines.push(el("p", "Books: Free for libraries and students.", "note"));
     }
     notes.replaceChildren(...lines);
+    if (manifestSettled) applyPhotos();
   }
 
   function showLoading(): void {
@@ -212,8 +209,8 @@ function start(root: HTMLElement): void {
 
   // Thumbnails arrive whenever the manifest does; the list never waits for it.
   void fetchManifest().then((m) => {
-    if (!m) return;
-    photos = m;
+    if (m) photos = m;
+    manifestSettled = true;
     applyPhotos();
   });
 

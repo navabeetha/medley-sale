@@ -5,8 +5,8 @@ import { item } from "../fixtures/catalogue-fixture";
 
 describe("isValidItem", () => {
   it("accepts a full item", () => expect(isValidItem(item({ id: "I-1", name: "x" }))).toBe(true));
-  it("accepts the minimum: string id and name, numeric freeUnits and unitsLeft", () =>
-    expect(isValidItem({ id: "I-1", name: "x", freeUnits: 0, unitsLeft: 0 })).toBe(true));
+  it("accepts the minimum: string id and name, numeric freeUnits and unitsLeft, price null (F7)", () =>
+    expect(isValidItem({ id: "I-1", name: "x", freeUnits: 0, unitsLeft: 0, price: null })).toBe(true));
   it.each([null, undefined, 5, "text", [], {}])("rejects %j", (v) => expect(isValidItem(v)).toBe(false));
   it.each([
     ["id", 42], ["id", undefined], ["name", 5], ["name", undefined],
