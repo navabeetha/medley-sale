@@ -11,5 +11,6 @@
     "skipLibCheck": true,
     "allowJs": false
   },
-  "include": ["src", "test", "playwright.config.ts", "vitest.config.ts"]
+  "include": ["src", "test", "playwright.config.ts", "vitest.config.ts"],
+  "exclude": ["src/appscript"]
 }

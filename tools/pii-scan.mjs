@@ -13,6 +13,8 @@ const isLockfile = (path) => path === "package-lock.json" || path.endsWith("/pac
 const SYNTHETIC_PHONE = /^(?:91|0091)?90000000\d{2}$/;
 const ALLOWED_EMAIL = [/@users\.noreply\.github\.com$/i, /^noreply@anthropic\.com$/i, /^noreply@github\.com$/i];
 
+/** A "domain" of only digits and dots is a package version, not an email. */
+const isVersionLike = (match) => /^[^@]*@[0-9.]+$/.test(match);
 const EMAIL = /[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+/g;
 // Candidate phone: optional +, then digits with single space/hyphen/bracket separators.
 // Separators: space, hyphen, brackets, dot and slash.
@@ -86,6 +88,7 @@ export function scanText(file, text, blocked = []) {
     const line = i + 1;
     for (const m of content.matchAll(PHONE)) if (isPhone(m[1], m[2])) add(line, "phone");
     for (const m of content.matchAll(EMAIL)) {
+      if (isVersionLike(m[0])) continue; // pkg@1.2.3 is not an address
       if (!ALLOWED_EMAIL.some((re) => re.test(m[0]))) add(line, "email");
     }
     for (const m of content.matchAll(ENCODED_EMAIL)) {

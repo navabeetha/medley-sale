@@ -41,6 +41,14 @@ describe("email addresses", () => {
     expect(rules("1234+someone" + "@users.noreply.github.com")).toEqual([]);
     expect(rules("Co-Authored-By: Claude <noreply" + "@anthropic.com>")).toEqual([]);
   });
+  it("does not flag package versions: a domain of only digits and dots is not an email", () => {
+    expect(rules("npm i pkg" + "@1.2.3")).not.toContain("email");
+    expect(rules("npx @google/clasp" + "@3.4.1")).not.toContain("email");
+  });
+  it("still flags an address with a real-looking domain", () => {
+    expect(rules("mail someone" + "@example.org")).toContain("email");
+    expect(rules("mail x" + "@1.2.example.org")).toContain("email");
+  });
   it("does not allow look-alike addresses", () => {
     expect(rules("x" + "@evil-users.noreply.github.com.example.org")).toContain("email");
     expect(rules("other" + "@anthropic.com")).toContain("email");

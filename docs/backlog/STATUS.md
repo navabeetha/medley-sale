@@ -1,9 +1,16 @@
 # Status board
 
-*Maintained by the PM and updated after every story. Last updated: 2026-11-03 (S-02 done).*
+*Maintained by the PM and updated after every story. Last updated: 2026-11-05 (S-03 Done and merged).*
 
 **Scope:** MVP only (brief Section 8), 43 points in 4 slices, worked in order.
-**Now:** S-01 and S-02 Done. First push made 2026-11-03; CI and Pages deploy green, site live with placeholder page. **Next:** S-03 (sheet schema, migration and `scrubStaging()`), then G0.3: the seller checks the scrub by eye. Every remaining Slice 1 story depends on S-03.
+**Now:** S-01, S-02 and S-03 Done. S-03 merged to `main` 2026-11-05 after the live run on the build copy: scrub (after [D-027](../decisions/D-027-header-row-detection.md), header row found, not assumed), seller's by-eye check, migrate (after [D-028](../decisions/D-028-books-name-under-brand.md), Books name under `Brand (+ Link)`) and all five post-migrate checks passed. Agents may now read the scrubbed build copy.
+
+**Resume here:** start S-04 (catalogue API) and S-05 (photo pipeline); they can run in parallel (different files). Carry forward from QA:
+- **S-04:** export and reuse `itemNameCol` and `findHeaderRow`. Other live tabs may also head their brand column `Brand (+ Link)` (there it means the brand). Live Books has no `Link` column: the link is rich text on the name cell, so build a Books fixture shaped like the live tab. R1 (scrub WARNING is a log line only) should be fixed before S-04 relies on the copy.
+- **S-05:** live Books heads the photo column `Photos`, not `Photo`; check every live tab's heading. Needs the seller's `.xlsx` export of the scrubbed copy into `private/` (runbook G0.3 step 4, D-019), asked for when S-05 starts.
+- Open S4 follow-ups: D-028 error wording on Books; formula-guard test for the Brand fallback; F-A to F-D and R2 to R6 in the qa-log.
+
+**Live headings (Books row 2):** Author, Brand (+ Link), Available from, Status, Price, Photos, (blank), (blank), Notes, Person.
 
 ## Gates
 
@@ -11,7 +18,7 @@
 |---|---|---|---|
 | G0 | G0.1 | Public GitHub repo, Pages from Actions, commit identity | Done 2026-11-03: secret added, backup cleaned (0 blocked-word hits), first deploy green |
 | G0 | G0.2 | Build copy, attached script, `clasp login` | Done 2026-11-03 |
-| G0 | G0.3 | Scrub run and checked by eye | Not started |
+| G0 | G0.3 | Scrub run and checked by eye | Done 2026-11-05: re-run after D-027 fix replaced 10 people, no WARNING; the seller confirmed by eye. Migrate and live checks passed |
 | G1 | | Staging review on phone, end of Slice 3 | Not started |
 | G2 | | Cutover (S-18) | Not started |
 
@@ -19,24 +26,24 @@ G0 is staged per [D-018](../decisions/D-018-g0-in-stages.md). Steps: [docs/runbo
 
 ## Waiting on the seller
 
-1. **G0.3** (after S-03's scrub runs): check the build copy by eye.
-2. Review the proposed decisions D-016 to D-023 when convenient. They stand as proposed meanwhile.
+1. Nothing blocking. Review the proposed decisions D-016 to D-023 and D-026 to D-028 when convenient. They stand as proposed meanwhile.
+2. (When S-05 starts) export the scrubbed build copy as `.xlsx` into `private/`.
 
 ## Board
 
 | Backlog | Ready | In progress | In QA | Done |
 |---|---|---|---|---|
-| S-04 to S-18 | none | S-03 | none | S-01, S-02 |
+| S-04 to S-18 | none (S-04 and S-05 are next, once the PM marks them Ready) | none | none | S-01, S-02, S-03 |
 
 ## Slices
 
 | Slice | Stories | Pts | Done pts | Exit | Status |
 |---|---|---|---|---|---|
-| 1. See the sale | S-01 to S-08 | 20 | 7 | Catalogue live, and D-001 proven | In progress |
+| 1. See the sale | S-01 to S-08 | 20 | 10 | Catalogue live, and D-001 proven | In progress |
 | 2. Reserve | S-09 to S-13 | 11 | 0 | Reserve through to the WhatsApp URL | Not started |
 | 3. Back out and sell | S-14 to S-16 | 8 | 0 | Full loop on staging, then G1 | Not started |
 | 4. Release | S-17, S-18 | 4 | 0 | Link ready for the group (G2) | Not started |
-| **Total** | | **43** | **7** | | |
+| **Total** | | **43** | **10** | | |
 
 ## Stories
 
@@ -44,7 +51,7 @@ G0 is staged per [D-018](../decisions/D-018-g0-in-stages.md). Steps: [docs/runbo
 |---|---|---|---|---|---|---|
 | [S-01](stories/S-01-scaffold-ci-pages.md) | Scaffold, CI and Pages deploy | 2 | 1 | none | Done (QA signed off; deploy verified 2026-11-03) | G0.1 done |
 | [S-02](stories/S-02-queue-engine.md) | Queue engine with quantity | 5 | 1 | S-01 | Done (QA signed off) | |
-| [S-03](stories/S-03-sheet-schema-migration.md) | Sheet schema and migration | 3 | 1 | S-01 | In progress | G0.3 after scrub |
+| [S-03](stories/S-03-sheet-schema-migration.md) | Sheet schema and migration | 3 | 1 | S-01 | Done (QA signed off; live checks passed 2026-11-05) | G0.3 done |
 | [S-04](stories/S-04-catalogue-api.md) | Catalogue API | 2 | 1 | S-02, S-03 | Backlog | D-001 go or no-go |
 | [S-05](stories/S-05-photo-pipeline.md) | Photo pipeline | 2 | 1 | S-03 | Backlog | Export after G0.3 |
 | [S-06](stories/S-06-catalogue-screen.md) | Catalogue screen | 3 | 1 | S-04 | Backlog | |

@@ -22,6 +22,7 @@ export function checkBudgets(dir) {
   let codeGzipBytes = 0;
   for (const file of walk(dir)) {
     const rel = relative(dir, file).split(sep);
+    if (rel[0] === "appscript") continue; // Apps Script bundle, not the site
     if (rel[0] === "photos") {
       const size = statSync(file).size;
       const isThumb = /thumb/i.test(rel.slice(1).join("/"));

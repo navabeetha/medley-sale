@@ -12,6 +12,7 @@ One dated entry per story verified (see `docs/qa/README.md`). No real names, num
 | T-04 (domain half) | S-02 | Automated | 2026-11-03 | Pass. New higher ID is S-11's job |
 | T-06 (domain half) | S-02 | Automated | 2026-11-03 | Pass for the cases tested. See S-02 F1 (a restored claim is never stamped) |
 | T-07 (domain half: overflow detection) | S-02 | Automated (`canMarkSold`) | 2026-11-03 | Pass. Revert and cell note are S-15. See S-02 F2 (NaN quantity) |
+| T-17 (fixture half) | S-03 | Automated (`test/unit/migrate*.test.ts`, in-memory fake) | 2026-11-04 | Pass on the fake; B1 to B4 and F5 closed (re-check). Live half after G0.3 |
 
 ---
 
@@ -337,3 +338,371 @@ None at S1 to S3.
 - Live site returns 200 with title, viewport, referrer, robots and CSP meta tags. `/private/`, `/.git/`, `/.git/config`, `/BUILD_BRIEF.md` return 404.
 - `playwright install --with-deps` works on the runner.
 - Phone-viewport rendering covered by the CI e2e profiles; an on-device look is left to G1.
+
+## 2026-11-04: S-03 Sheet schema and migration (scrubStaging, migrate, Apps Script adapter)
+
+Branch `S-03-sheet-schema-migration`, commits f162cae (red), 601408e (green), ea37f67 (adapter and build), diffed against `main` 4fdb806. QA by the QA agent. No clasp was run and no sheet was touched. Every probe used the synthetic fixture and `+91 90000 000xx`-style digits.
+
+### What changed
+
+- `src/api/sheet.ts`: a minimal Spreadsheet/Tab interface. `src/api/migrate.ts`: `scrubStaging()` and `migrate()`, which are pure and run over that interface.
+- `test/fixtures/fake-sheet.ts`, `test/fixtures/staging-fixture.ts`: an in-memory fake and a synthetic fixture. `test/unit/scrub-staging.test.ts` and `test/unit/migrate.test.ts` cover T-17.
+- `src/appscript/adapter.ts` and `main.ts`: the SpreadsheetApp adapter, entry points and the token source from `Utilities.getUuid()`. `tools/build-gas.mjs` builds an IIFE bundle with top-level `scrubStaging`/`migrateSheet`. `tools/push-gas.mjs` runs clasp 3.4.1 through npx. `@types/google-apps-script` was added as a dev dependency and stated in the commit message. The size budget now skips `dist/appscript`.
+
+### Verified
+
+- **Gate:** I ran `npm ci && npm run check` fresh and it exited 0. Results: Vitest 14 files and 283 tests passed, Playwright 16 passed, size 0.7 KB of 50 KB gzipped, and `pii-scan: 89 files, 0 finding(s)`. npm audit reports 11 moderate issues in dev dependencies (not new to S-03, not chased).
+- **Tests first:** f162cae contains only stubs and tests, then 601408e adds the implementation. `.clasp.json` and `dist/` are gitignored and untracked. `.clasp.json` has `rootDir: dist/appscript`, so a push cannot upload repo files.
+- **Bundle:** `npm run build:gas` produces exactly two top-level functions, `scrubStaging` (listed first) and `migrateSheet`. Everything else is inside `var A44`. The bundle has three `console.log` calls, and all of them log counts only.
+- **Token randomness:** I took `randomBytes` out of the built bundle and ran it with a stubbed `Utilities.getUuid` backed by `crypto.randomUUID`. It produced 200,000 tokens of 16 bytes, using exactly 2 UUIDs per token. Indexes 12 and 16 of the dash-free UUID are the version and variant nibbles, so the extraction is correct. The worst per-byte chi-squared across the 16 positions was 296 (critical value about 330), and the worst per-nibble value was 27.3 (critical about 37.7). No byte is constant or biased. Without the drop, byte 6's high nibble would always be 4 (a 20,000/20,000 run), and no unit test would catch that (F8).
+- **Refusal:** the BUILD COPY check runs before any write, the check is case-sensitive, and the error contains no data. All of this is tested.
+- **Logs:** the scrub and migrate results and logs contain counts only, and this is tested with console spies.
+- **Adapter vs real SpreadsheetApp:** this was a desk check, not run live.
+  - `getGrid` guards empty tabs before `getDataRange`.
+  - Indexes are 1-based throughout.
+  - `getTitle()` maps to `Spreadsheet.getName()`, which is the file title.
+  - `requireValueInList(list, true)` is used correctly.
+  - `getSheets()` includes hidden tabs.
+  - Merged cells hold their value in the top-left cell, so they are read and written correctly.
+  - A scrub that crashes partway is safe to rerun: Person cells are simply overwritten again.
+- **Mutants:** I ran them against a scratch copy, using the two S-03 test files. Killed: phone regex needing 11+ digits, Sold written as active, and the scrub filling blank Person cells. **Survived:**
+  - removing `guardText` from the scrub
+  - scanning row 2 of every tab
+  - giving Available rows that have a Person a claim
+  - removing `claimed.add`
+  - a phone regex that accepts 9 digits
+  - treating `""` as a valid status (the tests use `null` for a blank, but real Sheets returns `""`)
+  - giving every synthetic name the same value
+  - skipping the first row when collecting used IDs
+
+### Findings (worst first)
+
+**Blockers. These must be fixed before the scrub is pushed and run on the build copy:**
+
+- **B1 (S1 latent): `migrateSheet` has no guard, and running it before the scrub leaves real names in Claims and Bookings after a "successful" scrub.** The scrub replaces only `Person` columns. `migrate` copies Person into `Name` in both new tabs.
+  - Reproduced on the fixture: running migrate then scrub returned `peopleReplaced: 6`, and all three synthetic buyer names were still in the sheet.
+  - Scenario: the seller picks `migrateSheet` from the Run dropdown by mistake (the two entries sit side by side), notices, and runs `scrubStaging`. She checks Person, the README and the headers as G0.3 asks, then says "scrub checked". Agents can then read real names from Claims and Bookings.
+  - Fix: `migrate` refuses unless the title contains BUILD COPY **and** the scrub has visibly run (for example, every non-blank item-tab Person matches `^Test Person \d+$`, which the fake can test). Also make `scrubStaging` scrub (or refuse on) the `Name`/`Number` columns of existing Claims and Bookings tabs.
+  - **My view on the guard: yes, add a BUILD COPY guard to `migrateSheet` now.** The brief (4.2) says the real sheet "stays public and in daily use… Nothing about it changes during the build". If the seller ever pastes the wrong script ID into `.clasp.json`, or copies the code into the real sheet, an unguarded migrate adds columns and tabs there and writes bearer tokens into a link-shared sheet. S-18 should lift the guard deliberately, for example with a Script Property holding the exact sheet name as confirmation, and record that in a decision.
+- **B2 (S1 latent): the scrub skips a number stored as a number.** It only checks `typeof cell === "string"`. Sheets turns an unspaced number typed alone in a cell (for example `+919000000001` or `9000000001`) into a numeric cell.
+  - Reproduced: a numeric README cell and a numeric header cell were both unchanged, and they were not counted.
+  - The phone regex `/\+?\d(?:[\s-]?\d){9,}/` also misses these synthetic forms: `90000  00001` (double space), `90000 - 00001`, `90000.00001`, `90000/00001`, `90000–00001` (en dash), `+91 (90000) 00001`, and full-width digits.
+  - It does catch: `+91-90000 00001`, the leading-zero 11-digit forms (spaced and unspaced), `(+91) 90000 00001` (leaves `(+91) [removed]`), `wa.me/91…`, `wa.me/+91-…`, `api.whatsapp.com/send?phone=91…`, and non-breaking spaces.
+  - False positives are harmless because only the README and headers are touched. For example, an ISBN or a 13-digit order number becomes `[removed]`.
+  - Fix: match on `String(cell)` for numbers. Count digits across a run with any short non-alphanumeric separators (1 to 3 characters, including `.`, `/`, `()` and dashes), and flag 10 or more.
+- **B3 (S1 latent): the scrub never sees a number hidden in a hyperlink or formula.** `getValues()` returns displayed values only.
+  - Scenario: a README cell reads "Message me on WhatsApp" and is a rich-text link (or `=HYPERLINK`) to `wa.me/91…`. The scrub reports 0 numbers, and the seller's by-eye check sees no number. D-019 then exports the copy to `.xlsx` and hyperlinks go with it. The brief (4.1) confirms the sheet uses rich-text links.
+  - Fix, either one:
+    - in code: for the README and header rows, also scan `getFormulas()` and every `getRichTextValues()` run's `getLinkUrl()`, and drop or rewrite any matching link;
+    - or in the runbook: add a G0.3 step to open every link in the README and headers and remove any WhatsApp or phone link.
+- **B4 (S2): the scrub fails open and reports success when it can't find what it should scrub.**
+  - Reproduced: if a tab's Person header is `person`, `Person name`, `Reserved by` or `Buyer`, or a title row sits above the header, that tab's names are left untouched. The total still looks plausible (3 instead of 6), with no warning.
+  - Also reproduced: if the README tab is named anything but exactly `README` (for example `Read me`), only its first row is scanned, and every number below it stays.
+  - Agents may not look at the real header names, so the code can't be tuned to them.
+  - Fix: log per-tab counts, using tab names only. Name every tab where no `Person` column was found, and say whether a `README` tab was found. Before G0.3, tell the seller the expected count from brief section 3 (7 Reserved + 3 Sold, so about 10 people).
+
+**Follow-ups (not blocking the scrub):**
+
+- **F5 (S2, must be fixed before S-18/G2): a rerun after deleting a row reuses the freed Item ID.** That attaches the old claim to a different item and drops the new reservation.
+  - Reproduced: migrate, delete the Tripod row (I-0002, claim active), add a Reserved "Kettle" row, then migrate again. Kettle gets I-0002, 0 claims are created, and Claims shows Tripod's active claim (old name) under Kettle's ID.
+  - Cause: `usedIds` is seeded only from the current item rows, not from `Claims` Item IDs.
+  - Fix: seed `usedIds` from Claims as well, or allocate above the maximum ID ever issued.
+  - Related edge, by design but undocumented: a sold-then-relisted item reserved again by hand is never migrated, because any existing claim for that Item ID blocks it. Write down that migrate is meant to run once per sheet, plus reruns to reconcile.
+- **F6 (S3): rows that make no sense are skipped without any count.**
+  - A Reserved or Sold row with a blank Person gets no claim. Reproduced: 5 claims instead of 6, with no message. After cutover, the API would treat that unit as free, which is a lost hold.
+  - An Available row with a Person is ignored. Mutant M3 (claiming such rows) survives, so the current skip is not pinned by any test.
+  - A Sold row whose price is text gets a blank Sold price.
+  - Fix: log a count of each case, and add tests.
+- **F7 (S3, unconfirmed): some notes and comments may survive the scrub.**
+  - `clearNote()` runs on `getDataRange()` only. A note on an otherwise empty cell outside the data range is probably neither counted nor cleared. Use the full `getRange(1,1,maxRows,maxCols)`.
+  - Threaded comments can't be removed by the script. The log tells the seller "Comments panel, Delete all". I'm not sure Sheets has a "Delete all" control: check the wording, and mention resolved comments.
+- **F8 (S3): `randomBytes` in `main.ts` is logic in an untested file.** I verified it statistically (above), but a regression such as dropping the nibble filter or reading only one UUID would ship unnoticed. Move it to a module with `getUuid` injected, and test the length, nibble removal and the count of UUIDs used.
+- **F9 (S4): the OAuth scope is broader than it needs to be.** There are no `oauthScopes` and no `@OnlyCurrentDoc`, so the seller will be asked to grant access to *all* her spreadsheets, the real sheet included. Add `@OnlyCurrentDoc` or the `spreadsheets.currentonly` scope. That lowers what any bug or `openById` could reach, and makes the consent screen less alarming.
+- **F10 (S4): two problems with how clasp is pinned and pushed.**
+  - The scanner workaround in `tools/push-gas.mjs` (building `name@version` at runtime) has no data risk. But it teaches "split the string to get past the scanner". Fix the scanner instead: an "email" whose domain is all numeric segments (`3.4.1`) is not an email.
+  - `npx -y` fetches clasp with no lockfile integrity, and clasp holds the seller's Google OAuth token. Make it a pinned dev dependency, which only needs a one-line reason under rule 5.
+- **F11 (S4): the fake doesn't behave like real Sheets in four ways.**
+  - `sheet.ts` says "Strings are stored exactly as given". Real `setValue`/`appendRow` parse input: the guard apostrophe is not returned by `getValue`, `1/2` becomes a date, and `00123` becomes 123. A hex token is all digits, or digits with one `e`, about once in 10^6 tokens, and Sheets would then read it as a number.
+  - The fake keeps `null` for blank cells, where real Sheets returns `""`.
+  - The fake keeps ragged rows, where real Sheets returns rectangular ones.
+  - The fake writes a new column at the header row's length. Real Sheets writes it at `getLastColumn()+1`. Real is the safer behaviour, but the tests don't model it.
+  - S-04 onwards must not rely on the fake's version of any of these.
+- **F12 (S4): small test and code gaps.**
+  - The fixture comment promises "a quantity-3 row" that doesn't exist.
+  - `idsAssigned` is only asserted as `>= 11`.
+  - The surviving mutants are listed above.
+  - `tsconfig` makes the Apps Script globals visible to `src/site` code too.
+  - migrate reads the whole grid once per row (O(n²)). That is fine at 65 rows.
+- **Observation:** the build copy's version history will keep the pre-scrub values. Agents must never open it. Owner-only sharing and the `.xlsx` export (which has no history) keep it contained.
+
+### Verdict
+
+**Blocked for pushing and running the scrub** until B1 to B4 are fixed, each starting with a failing test:
+
+1. `migrate` refuses unless the title contains BUILD COPY and the scrub has run, and the scrub handles Claims/Bookings `Name`/`Number`.
+2. Numeric cells are scanned, and the separators the regex accepts are widened.
+3. Hyperlink URLs and formulas in the README and headers are scrubbed, or G0.3 gets an explicit step to check links by hand.
+4. The scrub logs per-tab counts and names any tab with no Person column and a missing README tab.
+
+F5 must be fixed before S-18. F6 to F12 can follow. The pure logic is otherwise sound, and the token source is correct.
+
+### Not verified (manual or later)
+
+- Nothing was run against real SpreadsheetApp. These adapter behaviours are desk-checked only:
+  - `clearNote` scope
+  - apostrophe handling
+  - `appendRow` parsing
+  - data validation on rows 2 to 1000
+  - the To do / Sold formulas evaluating
+  - object (chart) sheets in `getSheets()`
+- **G0.3 manual check, after the blockers are fixed.** The seller runs `scrubStaging` alone, then:
+  - reads the per-tab log against about 10 people;
+  - opens every item tab, the Template and any extra tab, and checks that every Person cell reads `Test Person N`;
+  - reads every README cell and every header, including hidden tabs, rows and columns;
+  - hovers over or opens every link in the README and the headers;
+  - checks that there are no notes, and deletes every comment thread, including resolved ones;
+  - confirms no Claims or Bookings tabs exist yet.
+- After the migration on the build copy (a live check):
+  - the To do and Sold formulas render;
+  - State validation rejects other values;
+  - a formula-like name shows as text;
+  - a second run reports all zeros.
+- The npm audit moderates were not reviewed.
+
+## 2026-11-04 (re-check): S-03 fix round for B1 to B4 and F5 to F12
+
+Commits 7f73603 (red), f08f0fe, 7de5275 and c01426a (implementation), and 91e0d5f (two test defects fixed). QA agent. No clasp was run and no sheet was touched. Synthetic data only.
+
+### Verified
+
+- **Gate:** I ran `npm ci && npm run check` fresh and it exited 0. Vitest: 17 files, 366 tests. Playwright: 16. Size: 0.7 KB of 50 KB. `pii-scan: 93 files, 0 finding(s)`. `npm run build:gas` gives two top-level functions (`scrubStaging`, `migrateSheet`) and a manifest with only `spreadsheets.currentonly`. `allowUnscrubbed` appears in the bundle only as the check inside `migrate`. The entry point never passes it.
+- **Tests first:** 7f73603 holds the red tests.
+- **My first-review reproductions, rerun on the new code (fixture, synthetic):**
+  - **B1 closed.**
+    - migrate before the scrub: refused, and no Claims tab is created.
+    - Title without BUILD COPY: refused, even with `allowUnscrubbed`.
+    - Migrate (forced) and then scrub: no original name is left anywhere. Claims shows 6 names replaced.
+    - Scrub then migrate: runs, and no names are left.
+    - `Test Person 1 ` with a trailing space: refused, because the check is anchored.
+  - **B2 closed.** A numeric README cell and a numeric header cell both become `[removed]`. The pattern now catches all of these:
+    - a double space between the halves
+    - ` - `
+    - dot, slash and en-dash separators
+    - `+91 (90000) 00001`
+    - full-width digits
+  - **B3 closed (on the fake).** A README cell whose rich-text link points to `wa.me/91…` keeps its text and loses the link. A `=HYPERLINK("https://wa.me/91…","Chat")` cell becomes the plain text `Chat`. No links or formulas are left, and the README count is 5.
+  - **B4 closed as a warning.**
+    - A Person header of `person` or `Reserved by`, or a title row above the headers, puts the tab in `tabsWithoutPerson` and logs `WARNING … names NOT replaced, check by hand`. The names in that tab are deliberately left, so the warning is the safeguard (R1).
+    - A README named `Read me` gives `readmeFound: false` and a warning, and every cell in it is scanned.
+  - **F5 closed.** After a row is deleted, the new Reserved row gets I-0012, not the freed I-0002, and its own claim.
+- **Mutants:** 23 run against the four S-03 test files. The baseline is 135 tests, all green. **20 killed**, covering:
+  - every first-round survivor except two
+  - the title guard and the scrubbed-name guard
+  - the anchored name match
+  - link and formula removal
+  - Claims/Bookings name and number scrubbing
+  - numeric cells
+  - full-width digits
+  - the separator width
+  - `tabsWithoutPerson` and `readmeFound`
+  - Claims-seeded IDs
+  - the three F6 counts
+
+  **3 survive, all in the over-scrub direction and harmless:**
+  - also scanning row 2 of item tabs
+  - also scanning links and formulas in item-tab data rows
+  - removing `claimed.add`, since Item IDs are unique within a run
+- **F6 to F12:**
+  - F6: the three counts are in the result and the log, and are tested.
+  - F7: notes are now read and cleared across the whole tab, and the final log line now explains how to delete threaded comments by hand.
+  - F8: `uuidsToBytes` is pure and tested, including a check for constant bits. `randomBytes` asks for one UUID per 30 digits, so if the loop is ever miscounted, `uuidsToBytes` throws rather than padding.
+  - F9: the scope is set.
+  - F10: clasp is a pinned dev dependency, the workaround is gone, and the scanner ignores all-digit "domains" (tested).
+  - F11: the comment is fixed.
+  - F12: the fixture comment is fixed and `tsconfig` is split. Apps Script globals are visible only to `src/appscript` and `src/api`.
+
+### Adapter vs real Apps Script (desk check against the documented behaviour, not run)
+
+- **`getRichTextValues()` on number and formula cells.** The docs say `getRichTextValue` returns null when the cell value is not text. Numbers, dates and booleans therefore give null, and `getLinks` skips nulls without crashing. Formula cells with a text result return a value. Whatever `getLinkUrl()` reports for `=HYPERLINK`, the URL is caught anyway by `getFormulas()`, which is how B3 removes it.
+  - Remaining gap: a link attached to a cell whose value is a **number** is invisible to `getLinks` (R2).
+  - `setLink(null)` rewrites the cell as rich text from `getDisplayValue()`. That is always plain text, so it can't turn into a formula.
+- **Whole-tab notes (`getMaxRows` × `getMaxColumns`).** Each tab costs one batched `getNotes()` and, if any notes exist, one `clearNote()`. A default tab is 1,000 × 26 (26,000 cells), so each call should take well under a second. With about 6 tabs, the run should take seconds, not close to the 6-minute limit. It would only matter for tabs of millions of cells. Not measured live.
+- **`spreadsheets.currentonly`.** Everything the scrub and migrate call works on the bound file:
+  - `getActive`, `getSheets`, `getSheetByName`, `insertSheet`
+  - `getRange`, values, `setValue`, `appendRow`, `setFormula`
+  - notes
+  - `setDataValidation`, `setRichTextValue`
+  - The builders (`newDataValidation`, `newRichTextValue`) and `Utilities.getUuid`/`console` need no scope.
+  - Only `openById`, `openByUrl` and `create` need the full spreadsheets scope, and none is used.
+  - This depends on the script being **bound** to the build copy, which the runbook says it is.
+  - Later stories must add scopes explicitly: MailApp (D-013) needs `script.send_mail`, and installable triggers need `script.scriptapp`. S-04 should confirm that `getActive()` works in the web-app context.
+
+### Findings (worst first)
+
+None at S1 or S2.
+
+- **R1 (S3): "fail loud" is a log line only.** The run still ends green when `tabsWithoutPerson` is not empty or the README is missing. A non-technical seller could miss a WARNING line in the middle of the execution log. Suggested fix: `scrubStagingRun` throws a final summary error, with tab names only, after doing its work, so the editor shows red. For now, the G0.3 step below covers it.
+- **R2 (S3, unconfirmed): a hyperlink on a number cell is not detected.** If the number is itself a phone number, the value is replaced, but whether `setValue` also drops the link is undocumented. Covered by the link step in G0.3.
+- **R3 (S4): the phone pattern misses some forms.** It misses Devanagari digits and separators longer than 3 characters, such as a line break plus indentation. It over-matches date and time runs in the README, which then become `[removed]`. That's accepted, and affects the build copy only.
+- **R4 (S4): side effects of scrubbing again after migrate.** It renumbers the Claims and Bookings names, so they no longer match Person. It could also write into the spill range of the To do and Sold FILTERs if a spilled cell held a phone number. Staging only: migrate writes Number blank anyway.
+- **R5 (S4): two small inaccuracies.** The `MigrateResult` doc "All zero on a rerun" is no longer true, because the F6 counts repeat. `numbersRemoved` counts a Claims Number cell twice if it holds a phone number.
+- **R6 (S4): pinning clasp brings 2 high (zod, memory exhaustion) and more moderate advisories into the dev tree.** It's a local CLI, never shipped. Revisit when clasp releases a fix.
+
+### Verdict
+
+**Sign-off with follow-ups.** The code may be pushed to the build copy and `scrubStaging()` run. R1 and R2 are covered by the manual steps below, and R1 should be fixed before S-04 relies on the copy. R3 to R6 are optional. S-03 becomes Done only after G0.3 is confirmed and the post-migrate live check passes. Merging to `main` doesn't depend on those.
+
+### G0.3: exact steps for the seller
+
+1. In the build copy, open Extensions > Apps Script. Choose `scrubStaging` in the function list (not `migrateSheet`), then press Run. Accept the permission prompt. It should ask only about **the spreadsheet this script is installed in**. If it asks for all your spreadsheets, stop and tell the PM.
+2. Read the Execution log to the end.
+   - If any line says **WARNING**, stop and tell the PM which tab names it lists. Don't say "scrub checked".
+   - The last count should be about 10 people.
+3. Open every tab, including hidden ones (right-click the tab bar). In each tab, check every row of the Person column: each one should read `Test Person` and a number, or be blank. Also look through the Notes column for real names.
+4. Read every cell of the README tab, and the top row of every tab. Your phone number should appear nowhere. `[removed]` is expected.
+5. Hover over or click every link in the README and in the header rows. None should open WhatsApp or show a phone number. Remove any that do.
+6. Open the Comments panel (the speech-bubble icon, top right). Delete every comment thread, including resolved ones in the comment history. Then check that no cell has a small black corner triangle, which marks a note.
+7. Check that there are no tabs called Claims or Bookings yet.
+8. Tell the PM "scrub checked". Don't open version history in the build copy, and don't share the copy.
+
+### Not verified
+
+- Nothing has run on real Sheets. The rich-text, note, scope and timing points above are desk checks.
+- After migrating the build copy, a live check still needs to show that:
+  - the formulas show results
+  - State validation works
+  - a formula-like name shows as text
+  - a rerun creates nothing
+- Mutants were run against the S-03 test files only.
+
+## 2026-11-05: S-03 bug fix D-027 (header row found, not assumed to be row 1)
+
+Commits since 27a99fa: f475615 (red tests), 27b6708 (`findHeaderRow` in `src/api/header-row.ts`, used throughout `src/api/migrate.ts`), c32758a (sheet.ts comment) and 6c0fe2e (two test corrections). QA agent. No clasp was run and no sheet was touched. Synthetic data only.
+
+Why this exists: the first live `scrubStaging` on the build copy logged `WARNING no Person column found` for Tech, Gym & Sport, Home Things, Books and Template, replaced 0 people and cleared 13 number cells. The real tabs have a title on row 1 and the headers on row 2. Every S-03 path read `grid[0]` as the header. D-027 is the spec.
+
+### Verified
+
+- **Gate:** `npm run check` run fresh (without `npm ci`; the dependencies were already installed). Exit 0. Vitest: 18 files, 403 tests. Playwright: 16 passed. Size: 0.7 KB of 50 KB. `pii-scan: 97 files, 0 finding(s)`.
+- **Tests first:** f475615 contains only the tests and the fixture. The implementation follows in 27b6708.
+- **Test corrections in 6c0fe2e are right.** `quantitiesSet = ids.length + 1` matches migrate.test.ts (11 + 1, the +1 being Template's example row), and my simulation gives 12. The inverted hardening test ("title row above headers" is no longer flagged and its Person is replaced) is what D-027 rule 1 requires.
+- **No row-1 assumption is left on item tabs or Template in `src/`.** I grepped for `grid[0]`, `slice(1)`, `r = 1` and `setCell(1`. What's left is only on Claims, Bookings, To do and Sold (row 1 by D-027 rule 6), plus the `tabsWithoutPerson` "has data" check (`grid.slice(1)`), which is harmless. No other module in `src/` reads item tabs yet: `header-row.ts`, `migrate.ts`, `random.ts`, `sheet.ts`, and the adapter has no logic.
+- **The re-run the seller will actually do, simulated.** I took the titled fixture, ran the **old** scrub (27a99fa) once, then the new scrub twice, then migrate.
+  - Run 1 (old code) reproduced the live symptom: WARNING for all 5 tabs, 0 people.
+  - Run 2 (new code): 6 of 6 people replaced, 0 numbers, 0 notes, no WARNING lines. No fixture buyer name is left anywhere.
+  - Run 3: the same counts. It renumbers the same cells, so it's idempotent in effect.
+  - Migrate after that passes the preflight: 10 columns, 4 tabs, 11 IDs, 12 quantities, 6 claims.
+- **The migrate preflight (question 4)** checks only the rows below the detected header. A name in a row above the header is never a data row. `validateTab`, ID and quantity filling, and claim creation all start at `hr + 1`, so it can't become a claim. Pinned by the "does not read title rows as items" and "writes nothing into row 1" tests, and by the mutants below.
+- **Template with its header on row 3** (not covered by the tests; I ran it by hand). ID and Quantity land on row 3, the note row 2 is untouched, and the example row on row 4 gets Quantity 1 and no ID. Correct.
+- **Width (question 3).** The real adapter's `getGrid` is `getDataRange().getValues()`, which is rectangular. So `head.length` is the tab's last used column across **all** rows, and ID and Quantity land just to the right of the rightmost content anywhere in the tab (title row included). That never overwrites data, but it's K and L only if nothing sits to the right of the last header. On the fake, rows can be ragged. A header shorter than a data row would overwrite that data cell in the fake, but this can't happen on the real adapter. The behaviour is the same as before D-027.
+- **Hidden tabs:** `getSheets()` returns hidden sheets, so they are scrubbed. (Desk check of the Apps Script docs, not run.)
+- **Mutants:** 14 run against the full unit suite (baseline 403 green). **11 killed**:
+  - search window 4 and 6
+  - dropping `trim`
+  - always returning row 0
+  - scanning numbers on row 1 only
+  - replacing people from the header row itself
+  - the preflight skipping the first data row, or using `slice(1)`
+  - writing the ID header to row 1
+  - ID seeding skipping the first data row
+  - `validateTab` skipping the first data row
+
+  **3 survive:**
+  - Formula and link keys limited to row 1. This only affects formula or link cells missing from `getGrid`. On the real adapter all three use `getDataRange`, so this is equivalent there.
+  - Template's quantity loop starting at index 1. Equivalent when the header is on row 2, because the header's own Quantity cell isn't blank. It would write `1` into a note row if Template's header were on row 3 or lower (see F-B).
+  - A case-insensitive `person` match. D-027 says "exactly", but no test pins it.
+
+### Findings (worst first)
+
+None at S1 or S2.
+
+- **F-A (S3, reproduced on the fake, latent): a stray cell reading exactly `Person` above the real header silently defeats the scrub for that tab.** I put `Person` in Tech L1. `findHeaderRow` picked row 1 and `personCol` became L. The scrub then reported `Tech: 0 people` with **no WARNING**, and 2 buyer names were left in Tech. When the stray cell is in the same column as the real Person header, the real header cell on row 2 is overwritten with `Test Person 1`. Migrate does refuse afterwards (`Tab "Tech" has no "Item" column`), so nothing reaches Claims. D-027's Cost section accepts this case, but only for migrate. The scrub has no equivalent loud failure.
+  - **Live risk is very low:** the first live run read `grid[0]` and found no `Person` in row 1 of any tab, so row 1 is known to be clean. Rows 3 to 5 could only matter if a tab's header is below row 2.
+  - Covered by the by-eye check. Suggested fix: the scrub warns when the detected header row has no `Status` (or item-name) cell, or when a tab with data replaces 0 people.
+- **F-B (S4): coverage gaps.**
+  - Template with its header on row 3 or lower is untested. It works, but the survivor above means a regression would go unnoticed.
+  - Exact-case `Person` isn't pinned.
+  - A formula or link on the header row that's absent from `getGrid` isn't pinned (fake-only).
+- **F-C (S4): first-run side effect the seller may notice.** Run 1 scanned **every** cell of the five tabs, data rows included, because no Person column was found. That cleared 13 cells, so some data cells may now read `[removed]` (for example an ISBN, a long price or code, or a link with digits). This is harmless on the build copy, but the seller shouldn't read it as a fault of the re-run.
+- **F-D (S4): nit.** The `headerIdx` helper comment in `header-row.test.ts` says "within `limit`", but it has no limit.
+- Earlier R1 (WARNING is a log line only) still stands.
+
+### Verdict
+
+**Sign-off with follow-ups.** The D-027 fix may be pushed to the build copy and `scrubStaging()` re-run. F-A is latent, the live evidence makes it unlikely, and the by-eye check plus migrate's refusal cover it. Fix it (or the earlier R1) before S-04 relies on the copy. F-B to F-D are optional.
+
+### G0.3: exact steps for the seller re-run (replaces step 2 of the 2026-11-04 list; steps 1 and 3 to 8 are unchanged)
+
+1. As before, run **only** `scrubStaging` on the build copy.
+2. Read the Execution log to the end. It should have this shape. The tab order follows your tabs, and N is your own count per tab:
+   ```
+   scrubStaging: tab "README": 0 people, 0 numbers, 0 notes
+   scrubStaging: tab "Tech": N people, 0 numbers, 0 notes
+   scrubStaging: tab "Gym & Sport": N people, 0 numbers, 0 notes
+   scrubStaging: tab "Home Things": N people, 0 numbers, 0 notes
+   scrubStaging: tab "Books": N people, 0 numbers, 0 notes
+   scrubStaging: tab "Template": 0 people, 0 numbers, 0 notes
+   scrubStaging: README tab found (every cell scanned)
+   scrubStaging: ~10 people replaced, 0 cells cleared of numbers, 0 notes removed
+   ```
+   - **There must be no line containing WARNING.** If there is one, stop and tell the PM which tabs it names.
+   - **Each item tab's people count should match the number of filled Person cells you know it has.** If a tab you know has reservations shows `0 people`, stop and tell the PM, even without a WARNING (F-A).
+   - **Numbers and notes should be 0 or close to it,** because the first run already cleared them. A non-zero count isn't a failure, but tell the PM which tab it was on.
+   - Template can show 1 person if its example row has a Person filled in. That's fine.
+3. In the by-eye check (step 3 of the earlier list), also check **row 1 (the title row) of every tab**. No real name or phone number should appear there, because a name in a title row is not replaced.
+4. Cells reading `[removed]` in data rows are from the first run (F-C). Leave them.
+
+### Not verified
+
+- Nothing has run on real Sheets. The width, hidden-tab and `getDataRange` points are desk checks of the adapter and the Apps Script docs.
+- The exact live counts. They depend on the seller's data, which QA must not read.
+- Tabs other than Tech and Books actually having their header on row 2 (the seller confirmed only those two). Any row from 1 to 5 works. Row 6 or lower gives the WARNING.
+- The post-migrate live checks listed on 2026-11-04 are still outstanding.
+- I did not run Playwright beyond the gate, or `build:gas`.
+
+## 2026-11-05: S-03 live run on the build copy (PM, live check)
+
+Seller ran everything from the Apps Script editor. Logs are counts only. No agent read the copy's data.
+
+- **scrubStaging, first run:** WARNING on all 5 item tabs, 0 people replaced, 13 numbers cleared. Cause: headers on row 2. Fixed as D-027.
+- **scrubStaging, second run (after D-027):** README 0, Tech 9 people, Gym & Sport 1, Home Things 0, Books 0, Template 0. 10 people in total, 0 numbers, 0 notes, no WARNING. The seller confirmed that Home Things and Books have no reserved or sold names, did the by-eye check, and said "scrub checked".
+- **migrateSheet, runs 1 and 2:** refused at preflight with `Tab "Books" has no "Item" column`, writing nothing. Books' name heading is `Brand (+ Link)`. Fixed as D-028. The first D-028 fix accepted only `Brand` and failed live in the same way.
+- **migrateSheet, after D-028:** the four new tabs exist. The successful run's log wasn't captured: the seller ran it more than once, and only a later re-run's log was pasted. That re-run logged all zeros (`0 columns added, 0 tabs created, … 0 claims created`), which passes the "a rerun creates nothing" check.
+- **Post-migrate checks by eye, all yes (seller):**
+  1. Tech row 2 ends with ID and Quantity, with `I-NNNN` IDs and quantity 1, and nothing new in row 1.
+  2. Claims has about 10 rows, with `Test Person N` names and sensible item names.
+  3. State validation rejects `banana`.
+  4. To do and Sold render without errors, and Sold shows Total sold.
+  5. Books `Brand (+ Link)` holds titles.
+- **Not checked live:** "a formula-like name shows as text". The scrubbed copy has no formula-like names, so this stays covered by unit tests only. The successful run's exact counts weren't seen.
+- **Owed:** QA review of the D-028 commits (8707627, 7382abc, the red test for `Brand (+ Link)`, and the follow-up fix).
+
+## 2026-11-05: S-03 QA of D-028 (Books name under "Brand (+ Link)")
+
+Reviewed commits 8707627, 7382abc, 42803f0, c601e07 (made inline by the PM).
+
+### Verified
+
+- Gate `npm run check`: tsc, eslint, Vitest 19 files / 408 tests passed, Playwright 16 passed, size 0.7 KB of 50 KB, pii-scan 99 files 0 findings.
+- Tests came first: at 42803f0 (red test, before c601e07) the D-028 file runs 2 failed / 3 passed, failing on `"Brand (+ Link)"`. 8707627 precedes 7382abc.
+- Fallback is Books-only: `itemNameCol` returns the `Item` match, or 0 for any tab not named `Books`. The "other tabs" test is meaningful because the Tech fixture already has a `Brand` column, so it throws only if Brand is refused.
+- `Item` preferred: the both-columns test adds an empty `Brand` column; if Brand won, the claim name would be blank and "Slow Rivers" missing.
+- Both reads of the item name in `src/api/migrate.ts` (preflight line ~277, claim build line ~462) go through `itemNameCol`. No other `ITEM_NAME_HEADERS`/`findCol` read of the name. `guardText` still wraps the item name.
+- Privacy: no real data, headings only. The live heading `Brand (+ Link)` is not personal data.
+
+### Findings
+
+- S4: on Books the preflight error still says `has no "Item" column`, though `Brand (+ Link)`/`Brand` would also do. Misleading if the seller renames it again. Not blocking.
+- S4 (coverage): no test that a formula-like book name under the Brand fallback gets the apostrophe guard. It shares the same line as the Item path, so a regression is unlikely.
+- Inherit in S-04: the catalogue API must reuse `itemNameCol` (export it, don't copy it). Other live tabs may also head the brand column `Brand (+ Link)`, and on them it is the brand, not the name. Fixtures still say `Brand` and have a separate `Link` column. Live Books has no `Link` column (the link is rich text on the name cell), so S-04 should test against a live-shaped Books fixture.
+- Inherit in S-05: live Books heads photos `Photos`, but fixtures use `Photo`. Confirm the heading on every live tab before the photo pipeline looks it up by name.
+
+### Verdict
+
+D-028 passes QA. S-03 can merge on D-028's account.
+
+### Not verified
+
+- Live data (QA must not read it). I relied on the seller's by-eye check that titles sit under `Brand (+ Link)`.
+- The headings on other live tabs beyond Tech and Books.
+- `build:gas` and the clasp bundle.

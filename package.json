@@ -9,7 +9,9 @@
   },
   "scripts": {
     "build": "node tools/build.mjs",
-    "typecheck": "tsc --noEmit",
+    "build:gas": "node tools/build-gas.mjs",
+    "push:gas": "npm run build:gas && clasp push -f",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.appscript.json",
     "lint": "eslint .",
     "test:unit": "vitest run",
     "test:e2e": "playwright test",
@@ -21,7 +23,9 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@google/clasp": "3.4.1",
     "@playwright/test": "^1.64.1",
+    "@types/google-apps-script": "2.0.13",
     "@types/node": "^26.6.6",
     "esbuild": "^0.28.2",
     "eslint": "^10.14.0",

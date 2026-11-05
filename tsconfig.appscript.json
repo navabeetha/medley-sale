@@ -1,0 +1,8 @@
+{
+  // Apps Script globals (SpreadsheetApp, Utilities) are visible only here, so
+  // site code cannot reach for them by accident.
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "types": ["google-apps-script"] },
+  "include": ["src/appscript", "src/api"],
+  "exclude": []
+}
