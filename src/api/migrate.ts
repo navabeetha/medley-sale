@@ -75,7 +75,7 @@ const BOOKS = "Books";
 const BOOKS_NAME_FALLBACK = ["Brand (+ Link)", "Brand"];
 
 /** 1-based column of the item (or book) name on this tab, or 0. */
-function itemNameCol(tab: Tab, head: CellValue[]): number {
+export function itemNameCol(tab: Tab, head: CellValue[]): number {
   const c = findCol(head, ITEM_NAME_HEADERS);
   if (c || tab.name !== BOOKS) return c;
   return findCol(head, BOOKS_NAME_FALLBACK);
