@@ -794,3 +794,70 @@ S-05 **passes QA** for merge. The acceptance criteria are met: the output matche
 - Pillow and openpyxl versions other than the pins, and Python versions other than 3.9.6.
 - Decompression-bomb-sized images (over 89 MP).
 - Behaviour when `public/photos` is a symlink.
+
+## 2026-11-05: S-05 QA re-check of D-031 hardening (4f383aa, a35dcac, b60b944)
+
+All probes used synthetic workbooks in a scratch folder. Nothing in `private/` was opened or run.
+
+### Verified
+
+- Gate: `npm run check` is green (Vitest 408, Playwright 16, size 0.7 KB, pii-scan 111 files, 0 findings). `npm run test:photos`: 55 passed, with 1 harmless openpyxl `UserWarning`.
+- Red first: at a35dcac, 11 failed and 44 passed.
+- Earlier findings 1–6 are fixed. Each was reproduced first and is now green:
+  1. MPO and WebP in the xlsx keep their orientation; raw bytes are now read from `xl/media`.
+  2. An `absoluteAnchor` picture goes into `skipped` and the run continues.
+  3. Undecodable media is skipped with a reason, and extra unreferenced media is counted in `unplaced_media`.
+  4. A zero-image export refuses to run when photos are already published.
+  5. The quality floor is 30, and the run raises rather than write an over-budget file. Synthetic noise now stops with "does not fit 120 KB even at quality 30".
+  6. The Brand fallback for alt text applies to Books only.
+- T-16 still holds on the raw-bytes path, end to end through `run()`. The output had only `VP8 ` chunks, no marker bytes and no metadata in `info` for every container tried:
+  - a PNG with tEXt, iTXt, zTXt, eXIf (GPS) and iCCP;
+  - a JPEG with EXIF (MakerNote, GPS), XMP, IPTC APP13, COM and ICC;
+  - a WebP with EXIF, XMP and ICCP;
+  - an MPO with EXIF, a MakerNote and ICC;
+  - a TIFF with an ImageDescription, EXIF and ICC;
+  - a GIF with a comment.
+- Zip path traversal: `ZipFile.read` only reads entries inside the archive. A rel target can only be read as an image if it names an `xl/media/` entry. Targets tried:
+  - `../../../../etc/passwd`, `../sharedStrings.xml` and an external `file:///etc/passwd` raise `KeyError` (from openpyxl's own load in `map_to_items`). The run stops with a traceback and writes nothing. No host file is read.
+  - A literal entry named `xl/media/../sharedStrings.xml` holding non-image bytes is skipped as undecodable.
+- CI: a `photos` job on Python 3.9 with pip caching keyed on `requirements.txt`, running `pytest`. Workflow permissions stay `contents: read`, and the job needs no secrets.
+- Mutants: 25 run against b60b944, 21 caught. All 9 survivors from the first review except ICC→sRGB are now caught.
+
+### Findings (worst first)
+
+1. **S2 (blocks merge), orientation is lost whenever the image also has an ICC profile.** `process()` calls `_to_srgb()` before `ImageOps.exif_transpose()`. `ImageCms.profileToProfile` returns a new image without the EXIF, so the transpose does nothing.
+   - Reproduced: a JPEG with orientation 6 and no ICC comes out (100, 200), which is correct. With an sRGB ICC it comes out (200, 100), sideways. Through `run()`, PNG, JPEG, WebP and MPO sources with ICC plus orientation all came out unrotated.
+   - Phone cameras embed both an ICC profile (for example Display P3) and an orientation tag, and the audit says the photos are mostly portrait. So if the export keeps original bytes, most rotated photos would ship sideways.
+   - This bug was present at the first review and I missed it: my metadata probes had both ICC and orientation, but I checked only metadata, not dimensions.
+   - Fix: transpose first, or carry the EXIF across. Start with a failing test: orientation 6 plus ICC gives a portrait image.
+   - Rated S2 rather than S3 because brief 7.1 says "respect orientation", so the acceptance criterion isn't met for typical phone photos.
+2. **S3 (blocks merge), a test artefact is committed under `public/photos/`.** b60b944 adds `public/photos/manifest.json` (`tech-001`, alt `Zebra Lamp Secret Name`), `tech-001-1.webp` and `tech-001-1-thumb.webp`. These are the synthetic CLI-test fixture, apparently produced by running the CLI by hand from the repo root, and the commit message doesn't mention them.
+   - Not real data, so not S1. But `build.mjs` copies `public/` to `dist/`, so the junk would deploy to Pages.
+   - It also means the first real run will treat it as "already published" content.
+   - Remove the files, and consider a test or pii-scan rule against fixture names under `public/`.
+3. **S4, a picture wrapped in `mc:AlternateContent` is reported as "absolute anchor".** Its `from` element is nested, so the scan doesn't find it. It's skipped visibly rather than silently, but the reason is wrong. Whether Sheets exports pictures this way is unknown.
+4. **S4, a broken rels target crashes with a traceback.** It's a `KeyError` from openpyxl, not a clean "Stopped:" message. It's loud and writes nothing.
+5. **S4 (coverage), some mutants survive:**
+   - skipping ICC→sRGB (the conversion is never tested, which is how finding 1 hid);
+   - letting a header-row image through (`row <= header` changed to `<`): the new header-row test passes anyway, probably because the row has no ID;
+   - a quality floor of 50 instead of 30;
+   - the CLI ignoring `--allow-empty`.
+6. **S4, CI pins Python 3.9, which reached end of life in October 2025.** setup-python may eventually drop it. Plan a move to 3.12 together with the pins.
+7. Still open from the first review: finding 7 (16-bit greyscale clips to white) and finding 9 (cwd-relative paths, accepted by the PM).
+
+### Verdict
+
+**Does not pass.** Return S-05 to the dev for findings 1 and 2, each starting with a failing test (finding 2 needs a guard). D-031's rules are otherwise correctly implemented and tested.
+
+### Live checks needed
+
+Unchanged from the first S-05 entry, plus:
+
+- On the contact sheet, every photo the seller knows to be portrait must be portrait.
+- The seller reports whether `unplaced_media` and `skipped` are empty.
+
+### Not verified
+
+- Real export structure.
+- Python versions other than 3.9.6.
+- A real CI run of the new job (it hasn't been pushed).
