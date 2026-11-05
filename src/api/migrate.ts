@@ -66,17 +66,19 @@ export interface MigrateResult {
 export const ITEM_NAME_HEADERS = ["Item"];
 /**
  * D-028: the real Books tab has no "Item" column. It was copied from the item
- * layout, so the book name sits under "Brand" (with its link), next to "Author".
- * "Item" still wins when a Books tab has both.
+ * layout, so the book name sits under "Brand (+ Link)" on the live copy (the
+ * link is the rich-text link on that cell), next to "Author". Plain "Brand" is
+ * accepted too, in case the seller tidies the heading. Exact headings only, as
+ * everywhere else (brief 4.1). "Item" still wins when a Books tab has both.
  */
 const BOOKS = "Books";
-const BOOKS_NAME_FALLBACK = "Brand";
+const BOOKS_NAME_FALLBACK = ["Brand (+ Link)", "Brand"];
 
 /** 1-based column of the item (or book) name on this tab, or 0. */
 function itemNameCol(tab: Tab, head: CellValue[]): number {
   const c = findCol(head, ITEM_NAME_HEADERS);
   if (c || tab.name !== BOOKS) return c;
-  return colOf(head, BOOKS_NAME_FALLBACK);
+  return findCol(head, BOOKS_NAME_FALLBACK);
 }
 const PERSON = "Person";
 const STATUS = "Status";
