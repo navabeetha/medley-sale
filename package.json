@@ -15,6 +15,7 @@
     "lint": "eslint .",
     "test:unit": "vitest run",
     "test:e2e": "playwright test",
+    "test:photos": "tools/photos/.venv/bin/python -m pytest tools/photos -q",
     "test": "npm run test:unit && npm run test:e2e",
     "size": "npm run build && node tools/size-budget.mjs dist",
     "pii": "node tools/pii-scan.mjs",

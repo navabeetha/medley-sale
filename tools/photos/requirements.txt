@@ -1,0 +1,6 @@
+# Photo pipeline (S-05). Local tool only; never shipped to the site.
+# Pinned for Python 3.9 (system python3 on this Mac).
+openpyxl==3.1.5   # MIT
+Pillow==11.3.0    # MIT-CMU (HPND); wheels bundle libwebp (BSD-3) for WebP
+pytest==8.4.2     # MIT
+# Smart crop is Pillow-only (entropy/saliency), so no numpy/OpenCV is needed.
