@@ -707,3 +707,53 @@ D-028 passes QA. S-03 can merge on D-028's account.
 - Live data (QA must not read it). I relied on the seller's by-eye check that titles sit under `Brand (+ Link)`.
 - The headings on other live tabs beyond Tech and Books.
 - `build:gas` and the clasp bundle.
+
+## 2026-11-05: S-04 QA of the catalogue API (branch S-04-catalogue-api)
+
+Reviewed commits 5efe4d5 (red tests), c613efc (D-030), 5ebed6c (`src/api/catalogue.ts`, `itemNameCol` exported), b1cdf80 (`doGet`, build wrapper, manifest `webapp` section, 30 s CacheService), 8f0831a (key-scan regex no longer bans `name`). Against the S-04 story, brief 4.1, 4.3, 6, 10.3 and D-026 to D-028, D-030.
+
+### Verified
+
+- Gate `npm run check` on a fresh run: tsc, eslint, Vitest 20 files / 448 tests passed, Playwright 16 passed, size 0.7 KB of 50 KB, pii-scan 102 files, 0 findings (no blocked-words list configured locally). `npm run build:gas` builds `dist/appscript/`.
+- Test-first order: red tests (5efe4d5) come before the handler (5ebed6c). 8f0831a edits a test, but only the key regex, which banned the `name` key that D-030 rule 1 requires. The new regex still bans `buyer*`, `person*`, `*_name`, `number`, `phone`, `token`, `booking*`, `claim*`, `holder*` and `status`.
+- Privacy (S1), by reading the code: the response is built field by field from an allow-list. Claims supplies only Claim ID, Item ID and State to the queue engine, and only counts come back out. Bookings is never read. Person and Status are never read. Rows above the header row (D-027) are skipped, so a title row is never output. The cache holds the same JSON string as the response, nothing more. The `unknown action` error does not echo its input. T-12 tests check the JSON against every private Claims and Bookings cell and every Person cell, and include a guard test showing the scan is not empty.
+- Notes are meant to be public. Brief 7 (item view "full notes") and S-08 ("Shows photos, notes") show them, and the real sheet shows them publicly today. They are not a code leak. See F2 for what's left.
+- Web-app surface: the bundle's top-level functions are `scrubStaging`, `migrateSheet` and `doGet` (plus the `A44` global). A web app only ever calls `doGet`/`doPost`. There is no `doPost` and no HtmlService page (so no `google.script.run`). `doGet` can't reach migrate or scrub. `action` is checked with strict equality against `"catalogue"`, and other parameters are ignored. Scope stays `spreadsheets.currentonly`.
+- Header row (D-027) through `findHeaderRow`, Books name through the shared `itemNameCol` (D-028, not copied), and `Brand (+ Link)` as the brand on non-Books tabs (it.each covers both headings).
+- Mutation run (23 hand mutants on `catalogue.ts`, each against `catalogue.test.ts`; the file was restored and the tree is clean). Killed: dropping the sold-out or unavailable exclusion, Books detection off, Books link taken from the brand column, http(s) filter removed, https refused, date not ISO or stringified, sold claims ignored, link row off by one, header row fixed at 0, photos always 0, notes null, `Brand (+ Link)` dropped. Survivors are under Findings or are equivalent (author read on every tab, blank-item-ID claims, Template exclusion, because the Template example row has no ID).
+
+### Findings (worst first)
+
+- **F1, S3 (very likely; confirm live): date cells come out one day early.** Apps Script's `getValues()` returns a date cell as midnight in the spreadsheet's time zone. With Asia/Kolkata, 2 Dec 2026 becomes `2026-12-01T18:30:00.000Z` after `toISOString()` (checked in Node: `new Date("2026-12-02T00:00:00+05:30").toISOString()`). The unit test passes only because its fixture uses `Date.UTC`. Its own assertion, `/^2026-12-02/`, would fail on the live value. Anyone (S-06) who reads the first 10 characters, or a browser outside IST, shows 1 Dec. Fix: format date cells as `yyyy-MM-dd` in the spreadsheet time zone (for example, the adapter passes `getSpreadsheetTimeZone()`, or the handler takes a formatter), with a test using a non-UTC midnight. Or the PM records in D-030 that `availableFrom` is an instant and S-06 must format it in Asia/Kolkata. QA has not fixed this.
+- **F2, S3 (process): free text is published as-is.** `notes`, `name` and `brand` are whatever the seller typed. The scrub replaced only Person values and numbers, so the build copy's Notes could still hold a real buyer name (for example "kept for …"). With `ANYONE_ANONYMOUS`, the staging deployment publishes them as soon as it's deployed. No code fix. Live check 2 below covers it.
+- **F3, S3: errors are not JSON.** `doGet` has no try/catch. A sheet or CacheService exception (a timeout, or a `put` over the size limit) returns Google's HTML error page, probably without CORS headers. So the site sees an opaque network failure, not `{error}`. Brief 4.3 says "All responses are JSON". By reading, I found no message that carries cell content: our code throws nothing that contains data. Platform messages also hold no data, but they can include a script line number. S-06 must treat a non-JSON or failed response as "API down".
+- **F4, S4: tab deny-list.** Any tab not in `README, Template, Claims, Bookings, To do, Sold` that has `Person`, `ID` and a name column is published. That includes a hidden tab or "Copy of Template". This matches migrate's approach and the brief's "all four tabs", but an allow-list of the four would fail closed. Check the live tab names (live check 9).
+- **F5, S4 (coverage gaps, from surviving mutants):** no test with several links in one cell. The first-link split could be removed, and the link would then be "url1 url2". No test with a text price ("₹1,000" becomes null, "Ask"), or with a price passed through as a string. No test with a text Quantity ("2" is hidden as unavailable). A coerced quantity also goes uncaught. No catalogue test with headers on row 1 or row 3 (fixing the header at row 1 survives; only `findHeaderRow`'s own tests cover it). No test with padded headers (`" Price "`, `trim` removable). No test with a junk Claims State.
+- **F6, S4: `doGet` is untested** (adapter code, as is the convention). Action validation and the cache-or-miss logic are unit-untested. The size guard counts UTF-16 characters, not bytes. That is fine at the current ~65 items.
+- **Inherit (S-11/S-14/S-15):** clear `CATALOGUE_CACHE_KEY` in every write handler, and in S-15's on-edit trigger too. Seller edits in the Sheets app (marking sold) are writes, and otherwise show up only after 30 s. D-030 rule 7 says so; nothing enforces it yet.
+- **Note:** a brand or book link is published as-is if it's http(s). A link to a Google Sheet or Drive file, or a `wa.me` link holding a number, would be public. I didn't check this against data. Live check 4 covers it.
+
+### Verdict
+
+Privacy (T-12) and web-app surface: **pass**. Code can merge once F1 is fixed (with a non-UTC test) or the PM records the instant-in-IST decision. Not Done until the live checks below pass (CORS go or no-go for D-001, and timings recorded per D-020).
+
+### Live checks still needed (staging deployment only, after the seller deploys)
+
+1. `?action=catalogue` returns JSON. `?action=x` and no parameters return `{"error":"unknown action"}`. Items come from all four tabs: Tech, Gym & Sport, Home Things and Books. Gym & Sport and Home Things header rows are still unconfirmed.
+2. Seller reads the JSON by eye for any real name or number in `name`, `brand`, `notes` and `author`, and searches it for `Test Person` (should find none) (F2).
+3. CORS: on the Pages origin, in DevTools console, `fetch("<url>?action=catalogue").then(r => r.json())` resolves. It follows the 302 to `script.googleusercontent.com`. Do this in desktop Chrome, iPhone Safari and Android Chrome, and once while signed in to two Google accounts. **Go or no-go for D-001: raise a failure right away.**
+4. Links: a Tech brand link and a Books title link appear as `https://…`. Compare the count with the staging sheet's linked cells. No link points at a Google Docs, Sheets or Drive host, or at wa.me.
+5. Dates: check the build copy's File > Settings time zone, then the `availableFrom` of the 2 Dec books (F1). Expect `2026-12-01T18:30:00.000Z` if unfixed.
+6. Prices: only *Free Fall* (and any genuinely blank price) is `null`. No text prices became `null` by accident.
+7. Timings (D-020): use `curl -sL -o /dev/null -w "%{time_total}\n" "<url>?action=catalogue"`. Cold: 5 runs, the first after a new deployment or more than 10 min idle. Warm cache-miss: wait 31 s between runs. Warm cache-hit: within 30 s. Record them in a new `D-0NN-apps-script-timings.md`. Raise warm over 3 s with the seller (N-05).
+8. Cache: change a staging price, then fetch again within 30 s (old value) and after 30 s (new value).
+9. Tab list: the staging (and later the real) sheet has no tabs, hidden ones included, other than the four item tabs and README, Template, Claims, Bookings, To do and Sold (F4).
+10. Sold-out items (the 3 Sold rows) are absent. A Reserved item shows `freeUnits: 0`.
+
+### Not verified
+
+- Anything on real Apps Script: CORS, redirects, timings, rich-text runs, date values, CacheService behaviour, error pages. I read these from the code and from known platform behaviour only.
+- The live headings on Gym & Sport and Home Things, and whether any live tab has a separate plain `Link` column (the catalogue ignores it).
+- The queue engine itself (covered by S-02 QA). I used it through `recalculate` only.
+- Playwright beyond the gate. No UI changed in S-04, so no screenshot is needed.
+- The pii-scan with the private blocked-words list (not configured in this worktree).
