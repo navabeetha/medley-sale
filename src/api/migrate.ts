@@ -2,6 +2,7 @@
 // Spreadsheet interface; the Apps Script adapter and the in-memory fake both
 // implement it. Columns are always found by header name, never by position.
 // Logs and results carry counts only: no names, numbers or tokens.
+import { HEADER_SEARCH_ROWS, findHeaderRow } from "./header-row";
 import type { CellValue, Spreadsheet, Tab } from "./sheet";
 
 export interface ScrubOptions {
@@ -145,24 +146,28 @@ export function scrubStaging(ss: Spreadsheet, opts: ScrubOptions = {}): ScrubRes
     const counts: TabScrubCounts = { peopleReplaced: 0, numbersRemoved: 0, commentsRemoved: 0 };
     tabs[tab.name] = counts;
     const grid = tab.getGrid();
-    const head = grid[0] ?? [];
+    // Header row: found for item tabs and Template (D-027), row 1 for system tabs.
+    // -1 (not found) behaves like a tab with no Person column.
+    const hr = SYSTEM_TABS.has(tab.name) ? 0 : findHeaderRow(grid);
+    const head = grid[hr] ?? [];
     const personCol = colOf(head, PERSON);
     const isClaimsLike = tab.name === CLAIMS || tab.name === BOOKINGS;
     if (tab.name === README) readmeFound = true;
 
     // Seller's number: every cell of a tab with no Person column (README, notes,
-    // anything unrecognised) and only the header row of an item tab.
+    // anything unrecognised) and, in an item tab, the header row and every row above
+    // it (titles, notes). Rows below the header are data and are not scanned.
     const headerOnly = personCol > 0;
     const formulas = new Map(tab.getFormulas().map((f) => [`${f.row},${f.col}`, f.formula]));
     const links = new Map(tab.getLinks().map((l) => [`${l.row},${l.col}`, l.url]));
     const cells = new Map<string, CellValue>();
     grid.forEach((row, r) => {
-      if (headerOnly && r > 0) return;
+      if (headerOnly && r > hr) return;
       row.forEach((cell, c) => cells.set(`${r + 1},${c + 1}`, cell));
     });
     // Formula and link cells can sit where getGrid() returned nothing.
     for (const key of [...formulas.keys(), ...links.keys()]) {
-      if (headerOnly && Number(key.split(",")[0]) > 1) continue;
+      if (headerOnly && Number(key.split(",")[0]) > hr + 1) continue;
       if (!cells.has(key)) cells.set(key, null);
     }
     for (const [key, cell] of cells) {
@@ -183,7 +188,7 @@ export function scrubStaging(ss: Spreadsheet, opts: ScrubOptions = {}): ScrubRes
 
     // People: every non-blank Person cell becomes a synthetic name.
     if (personCol) {
-      for (let r = 1; r < grid.length; r++) {
+      for (let r = hr + 1; r < grid.length; r++) {
         if (isBlank(grid[r]![personCol - 1])) continue;
         counts.peopleReplaced++;
         tab.setCell(r + 1, personCol, nextName());
@@ -244,16 +249,21 @@ function itemTabs(ss: Spreadsheet): Tab[] {
   return ss.getTabs().filter((t) => !NON_ITEM_TABS.has(t.name));
 }
 
+const noHeader = (tab: Tab): Error =>
+  new Error(`Tab "${tab.name}" has no "${PERSON}" header in the top ${HEADER_SEARCH_ROWS} rows`);
+
 /** Every non-empty data row of an item tab, with its status checked. Writes nothing. */
 function validateTab(tab: Tab): ItemRow[] {
   const grid = tab.getGrid();
-  const head = grid[0] ?? [];
+  const hr = findHeaderRow(grid);
+  if (hr < 0) throw noHeader(tab);
+  const head = grid[hr]!;
   requireCol(tab, head, ITEM_NAME_HEADERS);
   const statusCol = requireCol(tab, head, [STATUS]);
   requireCol(tab, head, [PERSON]);
   const skip = [colOf(head, ID), colOf(head, QUANTITY)];
   const rows: ItemRow[] = [];
-  for (let r = 1; r < grid.length; r++) {
+  for (let r = hr + 1; r < grid.length; r++) {
     const cells = grid[r]!;
     if (cells.every((v, i) => isBlank(v) || skip.includes(i + 1))) continue;
     const status = cells[statusCol - 1];
@@ -298,9 +308,10 @@ export function migrate(ss: Spreadsheet, opts: MigrateOptions): MigrateResult {
   if (!opts.allowUnscrubbed) {
     for (const tab of items) {
       const grid = tab.getGrid();
-      const personCol = colOf(grid[0] ?? [], PERSON);
-      if (!personCol) continue; // validateTab reports the missing column
-      for (const r of grid.slice(1)) {
+      const hr = findHeaderRow(grid);
+      if (hr < 0) continue; // validateTab reports the missing header
+      const personCol = colOf(grid[hr]!, PERSON);
+      for (const r of grid.slice(hr + 1)) {
         const p = r[personCol - 1];
         if (!isBlank(p) && !(typeof p === "string" && SCRUBBED_NAME.test(p))) {
           throw new Error(`migrate refused: run scrubStaging first (tab "${tab.name}" has a Person that is not a scrubbed name)`);
@@ -345,10 +356,13 @@ export function migrate(ss: Spreadsheet, opts: MigrateOptions): MigrateResult {
   // 3. ID and Quantity columns after the existing ones, Template included.
   const template = ss.getTab(TEMPLATE);
   for (const tab of template ? [...items, template] : items) {
-    const head = tab.getGrid()[0] ?? [];
+    const grid = tab.getGrid();
+    const hr = findHeaderRow(grid);
+    if (hr < 0) continue; // only a Template without a header can get here
+    const head = grid[hr]!;
     for (const name of [ID, QUANTITY]) {
       if (colOf(head, name)) continue;
-      tab.setCell(1, head.length + 1, name);
+      tab.setCell(hr + 1, head.length + 1, name);
       head.push(name);
       result.columnsAdded++;
     }
@@ -364,8 +378,9 @@ export function migrate(ss: Spreadsheet, opts: MigrateOptions): MigrateResult {
   }
   for (const tab of items) {
     const grid = tab.getGrid();
-    const idCol = colOf(grid[0]!, ID);
-    for (const r of grid.slice(1)) if (!isBlank(r[idCol - 1])) usedIds.add(String(r[idCol - 1]));
+    const hr = findHeaderRow(grid);
+    const idCol = colOf(grid[hr]!, ID);
+    for (const r of grid.slice(hr + 1)) if (!isBlank(r[idCol - 1])) usedIds.add(String(r[idCol - 1]));
   }
   let nextId = 1;
   const newId = (): string => {
@@ -381,7 +396,7 @@ export function migrate(ss: Spreadsheet, opts: MigrateOptions): MigrateResult {
   };
   for (const { tab, row } of rows) {
     const grid = tab.getGrid();
-    const head = grid[0]!;
+    const head = grid[findHeaderRow(grid)]!;
     const cells = grid[row - 1]!;
     const idCol = colOf(head, ID);
     if (isBlank(cells[idCol - 1])) {
@@ -392,9 +407,10 @@ export function migrate(ss: Spreadsheet, opts: MigrateOptions): MigrateResult {
   }
   if (template) {
     const grid = template.getGrid();
-    const head = grid[0] ?? [];
+    const hr = findHeaderRow(grid);
+    const head = grid[hr] ?? [];
     const skip = [colOf(head, ID), colOf(head, QUANTITY)];
-    for (let r = 1; r < grid.length; r++) {
+    for (let r = hr + 1; hr >= 0 && r < grid.length; r++) {
       if (grid[r]!.every((v, i) => isBlank(v) || skip.includes(i + 1))) continue;
       fillQuantity(template, r + 1, colOf(head, QUANTITY), grid[r]!);
     }
@@ -412,10 +428,10 @@ export function migrate(ss: Spreadsheet, opts: MigrateOptions): MigrateResult {
   for (const { tab, row, status } of rows) {
     const grid = tab.getGrid();
     if (status === "Available") {
-      if (!isBlank(grid[row - 1]![colOf(grid[0]!, PERSON) - 1])) result.availableWithPerson++;
+      if (!isBlank(grid[row - 1]![colOf(grid[findHeaderRow(grid)]!, PERSON) - 1])) result.availableWithPerson++;
       continue;
     }
-    const head = grid[0]!;
+    const head = grid[findHeaderRow(grid)]!;
     const cells = grid[row - 1]!;
     const person = cells[colOf(head, PERSON) - 1];
     if (isBlank(person)) {
