@@ -237,3 +237,92 @@ def standard_workbook(path) -> dict:
         "book-001": {"alt": "Test Novel", "colours": [(10, 10, 10)]},
         "skipped": [("Tech", 5), ("Tech", 1)],
     }
+
+
+# ---------------------------------------------------------------------------
+# Helpers that rewrite the .xlsx zip itself (to plant raw media / odd anchors)
+# ---------------------------------------------------------------------------
+
+
+def rewrite_zip(src, dst, replace=None, add=None, edit_drawing=None) -> None:
+    """Copy an .xlsx, optionally replacing/adding members or editing drawing1.xml.
+
+    replace: {member_name: bytes}; add: {member_name: bytes};
+    edit_drawing: fn(xml_str) -> xml_str, applied to xl/drawings/drawing1.xml.
+    """
+    import zipfile
+
+    replace, add = replace or {}, add or {}
+    with zipfile.ZipFile(src) as zin, zipfile.ZipFile(dst, "w", zipfile.ZIP_DEFLATED) as zout:
+        for item in zin.infolist():
+            data = zin.read(item.filename)
+            if item.filename in replace:
+                data = replace[item.filename]
+            if edit_drawing and item.filename == "xl/drawings/drawing1.xml":
+                data = edit_drawing(data.decode("utf-8")).encode("utf-8")
+            zout.writestr(item, data)
+        for name, data in add.items():
+            zout.writestr(name, data)
+
+
+def first_anchor_to_absolute(xml: str) -> str:
+    """Turn the first picture's oneCellAnchor into an absoluteAnchor (no row/col)."""
+    import re
+
+    return re.sub(
+        r"<oneCellAnchor><from>.*?</from>(.*?)</oneCellAnchor>",
+        r'<absoluteAnchor><pos x="0" y="400000"/>\1</absoluteAnchor>',
+        xml,
+        count=1,
+        flags=re.S,
+    )
+
+
+def sideways_landscape_image(fmt: str) -> bytes:
+    """200x100 stored (left red, right blue) with EXIF orientation 6, in MPO or WEBP.
+
+    Shown upright it is 100x200. Both formats are ones openpyxl would re-save
+    as PNG, losing the orientation tag.
+    """
+    im = Image.new("RGB", (200, 100), (255, 0, 0))
+    ImageDraw.Draw(im).rectangle([100, 0, 199, 99], fill=(0, 0, 255))
+    exif = Image.Exif()
+    exif[0x0112] = 6
+    buf = io.BytesIO()
+    if fmt == "MPO":
+        im.save(buf, "MPO", save_all=True, append_images=[im.copy()], exif=exif)
+    else:
+        im.save(buf, "WEBP", exif=exif, lossless=True)
+    return buf.getvalue()
+
+
+def uniform_noise_png(size: int, amplitude: int = 255, seed: int = 2) -> bytes:
+    """Per-pixel uniform noise around mid-grey: the hardest thing to compress."""
+    rnd = random.Random(seed)
+    im = Image.new("RGB", (size, size))
+    half = amplitude // 2
+    im.putdata([tuple(128 + rnd.randrange(-half, half + 1) for _ in range(3)) for _ in range(size * size)])
+    buf = io.BytesIO()
+    im.save(buf, "PNG")
+    return buf.getvalue()
+
+
+def white_noise_png(size: int, seed: int = 3) -> bytes:
+    """Full-range random bytes: cannot fit 120 KB / 12 KB at any acceptable quality."""
+    im = Image.frombytes("RGB", (size, size), random.Random(seed).randbytes(size * size * 3))
+    buf = io.BytesIO()
+    im.save(buf, "PNG")
+    return buf.getvalue()
+
+
+def needs_shrinking_photo(size=(1200, 900), seed=1) -> bytes:
+    """Photo-like image whose full WebP exceeds 120 KB at the first quality step
+    (measured: needs about q54 to fit) but fits well above the q30 floor."""
+    rnd = random.Random(seed)
+    coarse = Image.new("RGB", (40, 30))
+    coarse.putdata([tuple(rnd.randrange(256) for _ in range(3)) for _ in range(40 * 30)])
+    big = coarse.resize(size, Image.BICUBIC)
+    noise = Image.effect_noise(size, 60).convert("RGB")
+    buf = io.BytesIO()
+    Image.blend(big, noise, 0.2).save(buf, "PNG")
+    return buf.getvalue()
