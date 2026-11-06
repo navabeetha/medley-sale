@@ -30,6 +30,13 @@ export class FakeTab implements Tab {
     this.grid.push([...values]);
     for (const v of values) if (typeof v === "string") this.writtenStrings.push(v);
   }
+  /** All-or-nothing, like one setValues call: a throw (set `appendRows` to a throwing function in a test) writes no row. */
+  appendRows(rows: CellValue[][]): void {
+    for (const values of rows) {
+      this.grid.push([...values]);
+      for (const v of values) if (typeof v === "string") this.writtenStrings.push(v);
+    }
+  }
   getComments() {
     return this.comments.map((c) => ({ ...c }));
   }
@@ -62,7 +69,13 @@ export class FakeTab implements Tab {
 
 export class FakeSpreadsheet implements Spreadsheet {
   tabs: FakeTab[] = [];
+  /** How many times flush() was called (SpreadsheetApp.flush() in the real adapter). */
+  flushCount = 0;
   constructor(private title: string) {}
+
+  flush(): void {
+    this.flushCount++;
+  }
 
   getTitle(): string {
     return this.title;

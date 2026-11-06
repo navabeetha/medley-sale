@@ -23,6 +23,14 @@
 - Copy 6.4: "Your number is only seen by the seller and is used only for this sale." D-014 (name and number only). UX 7 errors (a failed form keeps what was typed). Route `#/reserve`.
 - Critical scenarios: **T-15** (input kept on API failure, with S-11), **T-10** (inert text in the site).
 
+## Notes from S-11 (PM, 2026-11-06)
+
+- Request fields (pinned by S-11): `{ action: "reserve", name, number, idempotencyKey, items: [{id, quantity}], website }` sent as a `text/plain` JSON POST body. `website` is the honeypot.
+- The idempotency key must be at least 128 random bits and match `^[A-Za-z0-9-]{16,64}$` (e.g. `crypto.randomUUID()` in the browser). It is generated when the form opens and kept until a booking succeeds.
+- Honeypot field markup: `autocomplete="off"`, a non-standard name, `tabindex="-1"`, `aria-hidden="true"`, visually hidden, so browser autofill never fills it for a real buyer.
+- Phone errors: `91` plus ten digits without `+` is refused, so the error copy should say to add `+`. Use `normalisePhone` from `src/domain/phone.ts` on the client too, so the site and API agree.
+- Error codes to map to friendly copy: `invalid-name`, `invalid-number`, `invalid-basket`, `invalid-request`, `too-many-claims`, `nothing-available` (with `skipped`), `not-reserving`, `not-configured`, `busy`, plus `{error:"unavailable"}` and network failure (T-15: keep the input).
+
 ## the seller needs to do
 
 Nothing.

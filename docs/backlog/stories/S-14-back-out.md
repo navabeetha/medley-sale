@@ -24,6 +24,10 @@
 - Copy 6.4: "Back out of [item]? If you change your mind, you'll rejoin at the end of the line."
 - Critical scenarios: **T-02, T-04, T-05**.
 
+## Notes carried from S-11 (PM, 2026-11-06)
+
+- The D-026 requirement "a waiter promoted by a write gets `Promoted at` (and so a `To do` row)" can't happen on a reserve: new claims join the end of the line. It is pinned here and in S-15 instead. A back-out or a sale that frees a unit must stamp `Promoted at` on the waiter who moves up, using `previousRole` from a recalculation before the write.
+
 ## the seller needs to do
 
 Nothing.

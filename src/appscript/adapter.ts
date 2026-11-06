@@ -19,6 +19,13 @@ class SheetTab implements Tab {
   appendRow(values: CellValue[]): void {
     this.sheet.appendRow(values);
   }
+  appendRows(rows: CellValue[][]): void {
+    if (rows.length === 0) return;
+    // One setValues call, so the rows land together or not at all. Rows must be the same width.
+    const width = Math.max(...rows.map((r) => r.length));
+    const padded = rows.map((r) => [...r, ...new Array<CellValue>(width - r.length).fill(null)]);
+    this.sheet.getRange(this.sheet.getLastRow() + 1, 1, padded.length, width).setValues(padded);
+  }
   /** Whole tab, not just the data range. Notes only: Apps Script has no API for threaded comments. */
   private fullRange(): GoogleAppsScript.Spreadsheet.Range {
     return this.sheet.getRange(1, 1, this.sheet.getMaxRows(), this.sheet.getMaxColumns());
@@ -94,6 +101,9 @@ class ActiveSpreadsheet implements Spreadsheet {
   getTab(name: string): Tab | undefined {
     const s = this.ss.getSheetByName(name);
     return s ? new SheetTab(s) : undefined;
+  }
+  flush(): void {
+    SpreadsheetApp.flush();
   }
   addTab(name: string): Tab {
     return new SheetTab(this.ss.insertSheet(name));

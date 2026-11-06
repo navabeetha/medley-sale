@@ -4,8 +4,10 @@
 import { addIdColumns } from "../api/add-id-columns";
 import { catalogue } from "../api/catalogue";
 import { CATALOGUE_CACHE_KEY, handleGet } from "../api/handle-get";
+import { handlePost } from "../api/handle-post";
 import { migrate, scrubStaging } from "../api/migrate";
 import { uuidsToBytes } from "../api/random";
+import { reserve } from "../api/reserve";
 import { warmCatalogue } from "../api/warm-catalogue";
 import { activeSpreadsheet } from "./adapter";
 
@@ -86,7 +88,31 @@ export function doGetRun(e?: { parameter?: Record<string, string> }): GoogleApps
   return ContentService.createTextOutput(body).setMimeType(ContentService.MimeType.JSON);
 }
 
+/**
+ * Web-app POST entry (brief 4.3). The body is text/plain JSON (no CORS preflight).
+ * Thin wiring only; the rules are in src/api/reserve.ts. The script lock is what
+ * makes concurrent reservations queue up one at a time (6.1 rule 6). The cache is
+ * the same one doGet and the warm job use, so reserve can clear the catalogue key.
+ * SITE_URL (Script Property) is the Pages URL the booking link in the WhatsApp
+ * message points at; SELLER_WHATSAPP is the same property the catalogue reads.
+ */
+export function doPostRun(e?: { postData?: { contents?: string } }): GoogleAppsScript.Content.TextOutput {
+  const props = PropertiesService.getScriptProperties();
+  const body = handlePost(e?.postData?.contents, {
+    reserve: (request) =>
+      reserve(activeSpreadsheet(), request, {
+        lock: LockService.getScriptLock(),
+        cache: CacheService.getScriptCache(),
+        randomBytes,
+        now: () => new Date().toISOString(),
+        sellerWhatsapp: props.getProperty("SELLER_WHATSAPP") ?? undefined,
+        siteUrl: props.getProperty("SITE_URL") ?? "",
+      }),
+  });
+  return ContentService.createTextOutput(body).setMimeType(ContentService.MimeType.JSON);
+}
+
 // tools/build-gas.mjs bundles this file as the global `A44` and appends top-level
 // `function scrubStaging()`, `function migrateSheet()`, `function addIdColumns()`,
-// `function warmCatalogue()` and `function doGet(e)` wrappers, because the
+// `function warmCatalogue()`, `function doGet(e)` and `function doPost(e)` wrappers, because the
 // editor's Run menu only lists top-level function declarations.

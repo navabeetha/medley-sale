@@ -163,7 +163,8 @@ describe("a Claims tab switches back to the queue engine (D-030 unchanged)", () 
 describe("contactUrl (D-034 rule 4)", () => {
   it("is a sibling of items on the response", () => {
     const r = run(realSheet(), { sellerWhatsapp: SELLER });
-    expect(Object.keys(r).sort()).toEqual(["contactUrl", "items"]);
+    // S-11 / D-038 rule 6 added `reserving` (see catalogue-reserving.test.ts).
+    expect(Object.keys(r).sort()).toEqual(["contactUrl", "items", "reserving"]);
   });
 
   it("turns '+91 90000 00001' into https://wa.me/919000000001 with no text parameter", () => {

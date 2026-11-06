@@ -22,6 +22,8 @@
 
 - **2026-11-06, from the R1 phone check:** the reserve message must say *which* item, not just its name. "Air purifier" alone was ambiguous because there are several. Include the **brand** after the name when the item has one (e.g. "Air purifier (Philips)"), keeping Books as book name then author (4.1). Apply the same rule to R1's per-card "Message to reserve" text ("Hi! I'd like to reserve: <name>") when this message work happens, so the two never disagree.
 
+- **From S-11 QA (PM, 2026-11-06):** the WhatsApp URL is now built on the server (`src/domain/message.ts`, used by `src/api/reserve.ts`), so the 2,000-character limit and "…and N more" (6.3) must be enforced there, not in the site. 15 units with long titles currently gives about 2,300 characters. Also confirm whether waiting lines should show a price (2.8 doesn't).
+
 ## References
 
 - Message 2.8 (no seller name. Book name first, then author, 4.1). URL limit 6.3 (under 2,000 characters, "…and N more"). API `waOpened` 4.3.
