@@ -29,6 +29,15 @@
 - **B2 (S4):** merging hidden (cache-pruned) entries back after the live render can push the basket past 15. Add each hidden entry only while the total stays at or under 15; show the limit message for any that don't fit.
 - **B3 (S4):** a cached list with fewer free units makes the stored count shrink permanently once the user changes anything. Keep the buyer's chosen count until a live render lowers it.
 
+## PM decisions on the red step's open points (2026-11-06)
+
+- **Idempotency key lifetime:** keep the key until a booking succeeds, across reloads and leaving/re-opening the form (sessionStorage, wrapped in try/catch; in memory if storage is blocked), so a timed-out booking retried after a reload can't book twice. On `invalid-request`, make a new key.
+- **Request timeout:** 30 seconds, then the "try again" message (the tests allow 10 to 130 s).
+- **Basket bar** stays hidden on the reserve screen.
+- **Remove** removes the whole entry; the outcome is one line per entry.
+- **Shared copy** is fine for `invalid-request`, `not-configured` and handler errors; the four the tests pin must stay distinct.
+- **Name length** counted like the API (UTF-16), kept for parity.
+
 ## Notes from S-11 (PM, 2026-11-06)
 
 - Request fields (pinned by S-11): `{ action: "reserve", name, number, idempotencyKey, items: [{id, quantity}], website }` sent as a `text/plain` JSON POST body. `website` is the honeypot.
