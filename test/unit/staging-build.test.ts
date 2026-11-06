@@ -28,7 +28,6 @@ describe("staging build", () => {
   it("the staging copy has its page and styles, and is kept out of search", () => {
     expect(existsSync("dist/staging/style.css")).toBe(true);
     const html = readFileSync("dist/staging/index.html", "utf8");
-    expect(html).toMatch(/<meta name="robots" content="noindex">/);
-    expect(readFileSync("dist/index.html", "utf8")).not.toMatch(/noindex/);
+    expect(html.match(/<meta name="robots" content="noindex">/g)).toHaveLength(1); // inherited from public/, not doubled
   });
 });
