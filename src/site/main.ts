@@ -3,8 +3,10 @@
 import type { CatalogueItem } from "../api/catalogue";
 import { createBasketView } from "./basket-view";
 import { API_URL } from "./config";
+import { createBookingPage } from "./booking-page";
 import { el } from "./dom";
 import { createReserveScreen } from "./reserve-screen";
+import { saveBooking, savedNav } from "./saved-bookings";
 import {
   availabilityLabels, displayTitle, formatPrice, pickupLabel, reserveUrl, sortItems, subtitle, validItems,
 } from "./view-model";
@@ -125,18 +127,27 @@ function start(root: HTMLElement): void {
   list.setAttribute("role", "list");
   // Two screens in one page (S-10): the catalogue, and the reservation form at #/reserve.
   const catalogueView = el("div");
+  const catalogueNav = el("div"); // "My reservations" (S-12), filled only while that view is the one showing
   catalogueView.append(
+    catalogueNav,
     el("h1", "A44 Medley Garage Sale"),
     el("p", "This is an early version. If anything looks odd, just message me.", "note", "early-note"),
     status, notes, list,
   );
   const reserveView = el("div");
-  root.replaceChildren(catalogueView, reserveView);
+  const bookingView = el("div"); // S-12 booking page at #/b/<token>
+  const bookingNav = el("div");
+  const bookingBody = el("div");
+  bookingView.append(bookingNav, bookingBody);
+  root.replaceChildren(catalogueView, reserveView, bookingView);
 
   const basket = createBasketView();
   const reserve = createReserveScreen(reserveView, basket, (token) => {
-    location.hash = `#/b/${encodeURIComponent(token)}`; // S-12 builds that page; the token is only ever in the hash
+    saveBooking(token);
+    location.hash = `#/b/${encodeURIComponent(token)}`; // the token is only ever in the hash and POST bodies
   });
+  const booking = createBookingPage(bookingBody, () => void load()); // a back-out frees a unit: read the list again
+  let catalogueScroll = 0; // where the buyer was on the list when the form opened (F4)
   let reserving = false;
   let photos: Manifest = readManifestCache(); // last good manifest: repeat visits show thumbnails at once
   let contactUrl: string | null = null;
@@ -158,18 +169,44 @@ function start(root: HTMLElement): void {
     }
   }
 
-  // The reservation screen replaces the catalogue only in reserving mode (D-038 rule 6); otherwise #/reserve
-  // is just the normal R1 list. Anything else in the hash (#/, #/b/<token>) shows the catalogue.
+  // Three screens: #/b/<token> is the booking page (S-12); #/reserve the form, in reserving mode only (D-038 rule 6;
+  // otherwise it is just the normal R1 list); anything else is the catalogue.
+  function bookingToken(): string | null {
+    if (!location.hash.startsWith("#/b/")) return null;
+    try {
+      return decodeURIComponent(location.hash.slice(4));
+    } catch {
+      return ""; // a broken escape names no booking
+    }
+  }
+
   function route(): void {
-    const onReserve = reserving && location.hash === "#/reserve";
+    const token = bookingToken();
+    const onReserve = token === null && reserving && location.hash === "#/reserve";
     const wasOnReserve = reserveView.firstChild !== null;
-    catalogueView.hidden = onReserve;
-    basket.setBarHidden(onReserve);
+    const wasOnBooking = !bookingView.hidden;
+    if (onReserve && !wasOnReserve && !catalogueView.hidden) catalogueScroll = window.scrollY;
+    catalogueView.hidden = onReserve || token !== null;
+    bookingView.hidden = token === null;
+    basket.setBarHidden(onReserve || token !== null);
+    catalogueNav.replaceChildren(...(catalogueView.hidden ? [] : savedNav()));
+    bookingNav.replaceChildren(...(token === null ? [] : savedNav()));
+    if (token !== null) {
+      reserve.close();
+      booking.open(token);
+      if (!wasOnBooking) window.scrollTo(0, 0);
+      return;
+    }
+    booking.close();
     if (onReserve) {
       reserve.open();
       if (!wasOnReserve) window.scrollTo(0, 0);
     } else {
       reserve.close();
+      if (wasOnReserve) { // back from the form: same place in the list, focus on the Reserve link
+        window.scrollTo(0, catalogueScroll);
+        document.querySelector<HTMLElement>('[data-testid="basket-reserve"]')?.focus({ preventScroll: true });
+      }
     }
   }
   window.addEventListener("hashchange", route);

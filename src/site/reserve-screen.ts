@@ -4,7 +4,7 @@
 import type { CatalogueItem } from "../api/catalogue";
 import type { Basket } from "./basket";
 import type { BasketView } from "./basket-view";
-import { API_URL } from "./config";
+import { postJson } from "./api-post";
 import { el } from "./dom";
 import {
   KEY_PATTERN, NOT_SURE, checkNumber, interpretReply, newIdempotencyKey, validateName, type Failure,
@@ -87,23 +87,7 @@ function keepBooking(response: unknown): void {
 
 // ---- network ----
 
-async function send(body: object): Promise<unknown> {
-  const ctl = new AbortController();
-  const timer = setTimeout(() => ctl.abort(), TIMEOUT_MS);
-  try {
-    // text/plain keeps this a "simple" request: Apps Script cannot answer a CORS preflight (brief 4.2).
-    const res = await fetch(API_URL, {
-      method: "POST",
-      headers: { "Content-Type": "text/plain;charset=utf-8" },
-      body: JSON.stringify(body),
-      signal: ctl.signal,
-    });
-    if (!res.ok) throw new Error("http");
-    return await res.json();
-  } finally {
-    clearTimeout(timer);
-  }
-}
+const send = (body: object): Promise<unknown> => postJson(body, TIMEOUT_MS);
 
 // ---- view ----
 
@@ -123,6 +107,9 @@ export function createReserveScreen(root: HTMLElement, basket: BasketView, onBoo
   // Fixed parts, so a live catalogue update replaces only the list and never the form (focus and typing survive).
   const back = el("a", "← Back to the sale", "back", "reserve-back");
   back.href = "#/";
+  const heading = el("h2", "Your reservation");
+  heading.tabIndex = -1; // focusable by script only: entering the form moves focus here (F4)
+  let pendingBooking = false; // a booking is in flight: Remove is off, so what was sent stays what is in the basket (F2)
   const listBox = el("div");
   const tail = el("div"); // the form, or the empty message
   const empty = el("p", "Your basket is empty. Pick something from the sale first.", "note", "reserve-empty");
@@ -156,6 +143,7 @@ export function createReserveScreen(root: HTMLElement, basket: BasketView, onBoo
       body.append(el("p", outcome, "status", "reserve-item-outcome"));
       const rm = el("button", "Remove", "remove", "reserve-item-remove");
       rm.type = "button";
+      rm.disabled = pendingBooking;
       rm.setAttribute("aria-label", `Remove ${item.name}`);
       rm.addEventListener("click", () => {
         basket.remove(e.id);
@@ -236,6 +224,8 @@ export function createReserveScreen(root: HTMLElement, basket: BasketView, onBoo
 
     function setPending(on: boolean): void {
       pending = on;
+      pendingBooking = on;
+      render(); // rebuilds the list only, so Remove follows; the form and its focus stay
       submit.disabled = on;
       status.hidden = !on;
     }
@@ -262,6 +252,7 @@ export function createReserveScreen(root: HTMLElement, basket: BasketView, onBoo
     async function book(nameText: string, numberText: string, website: string): Promise<void> {
       setPending(true);
       let fail: Failure = NOT_SURE;
+      const sentIds = basket.entries().map((e) => e.id);
       try {
         const reply = interpretReply(await send({
           action: "reserve",
@@ -274,9 +265,11 @@ export function createReserveScreen(root: HTMLElement, basket: BasketView, onBoo
         if (reply.kind === "booked") {
           // Success: the key has done its job, remember the buyer, empty the basket, and hand over (S-12).
           dropKey();
+          pendingBooking = false;
           writeBuyer(nameText, numberText);
           keepBooking(reply.response);
-          basket.clear();
+          // Only what was sent leaves the basket: an item added while this was in flight stays (F2).
+          for (const id of sentIds) basket.remove(id);
           form = null; // the next reservation starts a fresh form
           onBooked(reply.token);
           return;
@@ -300,9 +293,11 @@ export function createReserveScreen(root: HTMLElement, basket: BasketView, onBoo
 
   return {
     open() {
+      if (shown) return; // a live list arriving must not re-mount the form: that would drop the focused input (F1)
       shown = true;
-      root.replaceChildren(back, el("h2", "Your reservation"), listBox, tail);
+      root.replaceChildren(back, heading, listBox, tail);
       render();
+      heading.focus();
     },
     close() {
       shown = false;
