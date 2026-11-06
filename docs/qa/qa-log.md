@@ -1773,3 +1773,57 @@ Scope: the installable on-edit handler (`onClaimsEdit`), the 10-minute repair (`
 - The S-12 booking page (not built yet).
 
 **Screenshot:** `docs/qa/screenshots/S-10-form-390.png` (iPhone 14 profile, synthetic data, the "add a +" number error showing).
+
+## 2026-11-06: S-12 booking page + S-14 back-out UI (branch S-12-14-ui; f1be5c1, 820fcf0, 9aed2b9, a540d97 red; 25d7406 green; 77e0fd8 PM test fix), QA
+
+**Verdict: SIGN-OFF** (no S1/S2/S3; four S4 notes below, none blocking).
+
+### What changed
+- New `#/b/<token>` booking page (`src/site/booking-page.ts`): POSTs `{action:"booking", token}`, shows Reserved / Waiting (position, "This item was sold") / Sold to you / Ended, the 6.4 saved line, skipped items from the last reserve answer (sessionStorage, matched by token), a WhatsApp link (wa.me only) that fires `waOpened` once without blocking, a per-unit Back out with the 6.4 inline confirmation, and Tell the seller after a back-out.
+- `src/site/saved-bookings.ts`: tokens-only list in localStorage `medley-sale:bookings:v1` (D-005), newest first, deduped, junk-tolerant; "My reservations" header link(s).
+- F1 (no re-mount of the form on a live list), F2 (remove only sent ids; Remove disabled while pending), F4 (h2 focus; Back restores scroll and focuses Reserve with preventScroll; `html scroll-padding-bottom` replaced by `scroll-margin-bottom` on main's controls), F3 (success lands on `#/b/<token>`).
+- Shared `src/site/api-post.ts`. PM fix 77e0fd8: the S-10 spec no longer counts booking/waOpened/backOut POSTs in `sent` (acceptable: anything else, including unparseable bodies, is still counted).
+
+### Verified
+- Gate `npm run check`: exit 0. Vitest 42 files / 1342 tests; Playwright 1152 passed, 4 skipped (the pre-existing WebKit CLS skips); size 11.0 KB of 50 KB; pii-scan 247 files, 0 findings.
+- Test-first: 25d7406 touches no test files.
+- Mutations (each reverted): drop `onChanged()` after a back-out -> the catalogue-update test fails; drop the F1 `if (shown) return` -> F1 fails; `basket.clear()` instead of removing sent ids -> F2 fails; drop the `waSent` guard -> the waOpened-once test fails; restore `html { scroll-padding-bottom }` -> F4 fails (4 profiles). Removing `preventScroll` -> nothing fails (see gaps).
+- Exploratory e2e (temporary spec, deleted): POSTs carry no Referer (meta no-referrer); Tell the seller and WhatsApp links have `rel="noopener noreferrer"`; storage key names contain no token; corrupt JSON in the bookings key, last-booking and buyer keys -> no crash on booking page or catalogue; double Yes sends once; 390 and 320 px: no sideways scroll, every link/button >= 44 px, with confirmation open, two saved bookings and a long skipped name.
+- R1 (reserving:false): `/` shows the catalogue, no POSTs, no My reservations.
+- Screenshot: `docs/qa/screenshots/S-12-booking-390.png` (Chromium, iPhone 14 profile at 390 px, synthetic FULL_VIEW, two saved tokens, one skipped item).
+
+### Findings (worst first)
+- **F1, S4: Cancel stays live while a back-out is in flight and does not cancel it.** Repro: Back out -> Yes (slow answer) -> Cancel: the box closes, the request still completes and the unit moves to Ended. The redraw shows the truth, so nothing is hidden, but Cancel reads as an undo. Suggest disabling Cancel while pending.
+- **F2, S4: focus drops to `<body>` while a back-out is pending and after it succeeds** (the unit is rebuilt). Screen-reader users lose their place. Suggest focusing the Tell the seller link or the updated group heading.
+- **F3, S4: in R1 (status mode) a `#/b/<token>` URL POSTs `booking` and shows "We couldn't load your reservation just now. Please try again." with Try again.** Before this change it showed the catalogue. Nobody has a token in R1, so the impact is crafted or stale links only; the retry can never succeed. Browse-only `/` is unchanged.
+- **F4, S4: at 320 px the WhatsApp button's text wraps flush to the button edges** (`.wa` has no horizontal padding). Cosmetic.
+
+### Judgements on implementer choices
+- scroll-margin-bottom on main's controls: sound, and pinned by F4 and basket tests.
+- Focus with preventScroll on return: harmless but untested (the Reserve link is in a sticky bar, already in view).
+- "WhatsApp link disappears after a back-out because the mock answers null": a mock artefact, not a behaviour. The real `backOut` returns the booking's updated `whatsappUrl` (null only when nothing is held or waited for), so on staging the link stays with the updated message. That is correct; the fixture `backOutReply` should mirror it.
+- Bare `#/b/` -> not-found without a request: fine; same copy as a server not-found (uniform).
+- One generic back-out error: fine; `busy`, `not-allowed`, `not-found` and network failures are all retryable or impossible from the UI.
+
+### Coverage gaps (no test would go red)
+- `rel="noreferrer"` on the wa.me links (tests assert noopener only; meta no-referrer covers it anyway).
+- Focus after a back-out; Cancel while pending; R1 behaviour on `#/b/`.
+- `preventScroll` on the Reserve-link focus.
+- Back-out mock answers `whatsappUrl: null`, unlike the real API.
+- `waOpened` has no server route in `src/api/handle-post.ts` on this branch ("S-13 adds waOpened here"): the client ignores the failure by design, so nothing is recorded until S-13's API half lands.
+
+### Manual checks for G1 (real phone, staging)
+1. Reserve -> lands on the booking page; close the tab, reopen the site -> My reservations is there and opens the same booking.
+2. With the keyboard up on the name field during a cold start (~13 s), the keyboard stays open when the live list arrives (F1).
+3. Add an item while a reservation is pending -> it stays in the basket after success (F2); Back from the form returns to the same place in the list (F4).
+4. Tap Send on WhatsApp: WhatsApp opens (send only to herself or not at all); return -> page intact; staging records waOpened once (only once S-13's server half exists).
+5. Back out one unit of a 2-unit item -> confirm copy, one unit moves to Ended, the other stays; Back to the sale shows the freed unit; Tell the seller opens WhatsApp with the "I've backed out of ..." text and no private link.
+6. Double-tap Yes on a slow connection -> one back-out only.
+7. Safari Private mode (storage restricted): reserve still lands on the booking page (T-14).
+8. A random `#/b/...` link -> the plain not-found message (T-11).
+9. F5 (carried): with autofill and a password manager, the reserve request has an empty `website`.
+
+### Not examined
+- The real staging API (CORS, redirect, real booking/backOut answers); the API branch was QA'd separately.
+- VoiceOver/TalkBack announcement of the back-out alert.
+- Two tabs backing out of the same unit at once.
