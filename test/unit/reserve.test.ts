@@ -1304,3 +1304,141 @@ describe("reserve: coverage gaps found by QA's mutation check", () => {
     expect(section(r, "Reserved for me:")[0]).not.toContain("'-Retro lamp");
   });
 });
+
+// ---- Carried bugfixes from the S-11 QA re-check (S-15 story file, "Bugfix tickets carried from S-11")
+
+describe("reserve: R1 a booking is orphaned only when NO raw Claims row carries its Booking ID, whatever the State", () => {
+  const KEY = "r1-retry-key-0000001";
+  const THREE = [{ id: "I-0002", quantity: 3 }];
+  const STATE_COL = 6; // 0-based index of "State" in CLAIM_HEADERS
+
+  // The seller typed over the dropdown, or a paste put a stray space in: the row exists, but its State is not valid.
+  it.each([["Sold "], ["SOLD"], ["bogus"], [""], [null]])(
+    "replays the booking (same token, no new claims, no writes) when all 3 of its claims have the State %j",
+    (state) => {
+      const h = harness();
+      const first = h.ok({ idempotencyKey: KEY, items: THREE });
+      const claims = h.ss.getTab("Claims") as FakeTab;
+      for (const row of [3, 4, 5]) claims.grid[row - 1]![STATE_COL] = state; // row 1 header, row 2 the seeded Kettle claim
+      h.events.length = 0;
+      const again = h.ok({ idempotencyKey: KEY, items: THREE });
+      expect(again.token).toBe(first.token);
+      expect(again.bookingId).toBe(first.bookingId);
+      expect(claimsOf(h.ss)).toHaveLength(4); // nothing re-created: re-creating is the double-booking
+      expect(bookingsOf(h.ss)).toHaveLength(1);
+      expect(h.events).not.toContain("write");
+    },
+  );
+
+  it("still completes a booking whose claims were never written (no row at all with that Booking ID)", () => {
+    const ss = build();
+    seedBooking(ss, { id: 1, token: "orphan-bk-0001", key: KEY });
+    seed(ss, { claimId: 2, itemId: "I-0001", bookingId: "7", state: "sold" }); // someone else's row must not count as ours
+    const r = harness(ss).ok({ idempotencyKey: KEY, items: THREE });
+    expect(r.token).toBe("orphan-bk-0001");
+    expect(claimsOf(ss).filter((c) => c["Booking ID"] === 1)).toHaveLength(3);
+  });
+});
+
+describe("reserve: R2 a throwing flush still releases the lock", () => {
+  it("releases the lock exactly once, after the flush attempt, and still tries to clear the catalogue cache", () => {
+    const h = harness();
+    h.ss.flush = () => { h.events.push("flush"); throw new Error("Service Spreadsheets failed"); };
+    try { h.run(); } catch { /* the failure may surface as a throw; the lock must be freed either way */ }
+    const e = h.events;
+    expect(e.filter((x) => x === "releaseLock")).toHaveLength(1);
+    expect(e.indexOf("flush")).toBeGreaterThan(-1);
+    expect(e.indexOf("flush")).toBeLessThan(e.indexOf("releaseLock"));
+    expect(e).toContain(`cache:${CATALOGUE_CACHE_KEY}`);
+  });
+});
+
+describe("reserve: R3 SITE_URL is trimmed before it is checked", () => {
+  it.each([
+    ["a trailing space and newline", " https://example.invalid/medley-sale/ \n"],
+    ["a leading tab and trailing CR LF", "\thttps://example.invalid/medley-sale\r\n"],
+  ])("accepts SITE_URL with %s, and the private link has no stray whitespace", (_label, siteUrl) => {
+    const h = harness(build(), { siteUrl });
+    const r = h.ok();
+    expect(lines(r).at(-1)).toBe(`Change or back out: https://example.invalid/medley-sale/#/b/${r.token}`);
+  });
+
+  it("still refuses a SITE_URL that is only whitespace", () => {
+    expect(harness(build(), { siteUrl: " \n " }).run()).toEqual({ ok: false, error: "not-configured" });
+  });
+});
+
+describe("reserve: SITE_URL with userinfo is not configured (a surviving mutant in the QA mutation check)", () => {
+  it.each([
+    ["a user name", ["https://seller", "example.invalid/medley-sale"].join("@")],
+    ["a user name and a password", ["https://seller:pw", "example.invalid/"].join("@")],
+    ["an empty user name", "https://@example.invalid/"],
+  ])("answers not-configured, before the lock and writing nothing, for %s", (_label, siteUrl) => {
+    const h = harness(build(), { siteUrl });
+    const before = h.ss.snapshot();
+    expect(h.run()).toEqual({ ok: false, error: "not-configured" });
+    expect(h.events).toEqual([]);
+    expect(h.ss.snapshot()).toBe(before);
+  });
+});
+
+// ---- S-15 QA F4: a Number cell that Sheets turned into a number (the seller typed "+919000000011" without a space)
+
+describe("reserve: a Number cell holding a number is read as +91... (S-15 QA F4)", () => {
+  const NUMERIC = Number(BUYER_E164.slice(1)); // 919000000011: what Sheets stores for a typed "+919000000011"
+
+  /** Seeds an active claim for the buyer, then overwrites its Number cell with the bare number. */
+  function seedNumeric(ss: FakeSpreadsheet, claimId: number, state: "active" | "released" = "active"): void {
+    seed(ss, { claimId, itemId: "I-0002", state });
+    const claims = ss.getTab("Claims") as FakeTab;
+    claims.grid[claims.grid.length - 1]![CLAIM_HEADERS.indexOf("Number")] = NUMERIC;
+  }
+
+  it("counts numeric-Number claims towards the 20-claim limit: 20 of them refuse a 21st", () => {
+    const ss = build();
+    for (let i = 0; i < 20; i++) seedNumeric(ss, 100 + i);
+    const before = ss.snapshot();
+    expect(harness(ss).run({ items: [{ id: "I-0002", quantity: 1 }] })).toMatchObject({ ok: false, error: "too-many-claims" });
+    expect(ss.snapshot()).toBe(before);
+  });
+
+  it("the boundary holds: 19 numeric claims allow exactly one more", () => {
+    const ss = build();
+    for (let i = 0; i < 19; i++) seedNumeric(ss, 100 + i);
+    const h = harness(ss);
+    expect(h.ok({ items: [{ id: "I-0002", quantity: 1 }] }).units).toHaveLength(1);
+    expect(h.run({ items: [{ id: "I-0002", quantity: 1 }] })).toMatchObject({ ok: false, error: "too-many-claims" });
+  });
+
+  it("numeric-Number claims that are not active do not count", () => {
+    const ss = build();
+    for (let i = 0; i < 20; i++) seedNumeric(ss, 100 + i, "released");
+    expect(harness(ss).run({ items: [{ id: "I-0002", quantity: 1 }] }).ok).toBe(true);
+  });
+
+  it("does not count a numeric Number that belongs to someone else", () => {
+    const ss = build();
+    for (let i = 0; i < 20; i++) {
+      seedNumeric(ss, 100 + i);
+      const claims = ss.getTab("Claims") as FakeTab;
+      claims.grid[claims.grid.length - 1]![CLAIM_HEADERS.indexOf("Number")] = Number(OTHER_E164.slice(1));
+    }
+    expect(harness(ss).run({ items: [{ id: "I-0002", quantity: 1 }] }).ok).toBe(true);
+  });
+
+  it("replays a booking whose Bookings Number cell is numeric, for the same buyer, instead of refusing it", () => {
+    const ss = build();
+    seedBooking(ss, { id: 1, token: "tok-seeded-0001", key: "replay-key-0000002", number: NUMERIC as unknown as string });
+    seed(ss, { claimId: 2, itemId: "I-0001", bookingId: "1", number: BUYER_E164 });
+    const r = harness(ss).run({ idempotencyKey: "replay-key-0000002" });
+    expect(r).toMatchObject({ ok: true, bookingId: 1 });
+    expect(claimsOf(ss)).toHaveLength(2); // nothing new written
+  });
+
+  it("still refuses a replay from a different number when the stored Number is numeric (the token stays private)", () => {
+    const ss = build();
+    seedBooking(ss, { id: 1, token: "tok-seeded-0001", key: "replay-key-0000003", number: NUMERIC as unknown as string });
+    seed(ss, { claimId: 2, itemId: "I-0001", bookingId: "1", number: BUYER_E164 });
+    expect(harness(ss).run({ idempotencyKey: "replay-key-0000003", number: "90000 00021" })).toMatchObject({ ok: false, error: "invalid-request" });
+  });
+});

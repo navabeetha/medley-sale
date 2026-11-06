@@ -6,8 +6,11 @@ import { catalogue } from "../api/catalogue";
 import { CATALOGUE_CACHE_KEY, handleGet } from "../api/handle-get";
 import { handlePost } from "../api/handle-post";
 import { migrate, scrubStaging } from "../api/migrate";
+import { onClaimsEdit, type ClaimsEdit } from "../api/on-edit";
 import { uuidsToBytes } from "../api/random";
+import { recalculateAll } from "../api/recalc";
 import { reserve } from "../api/reserve";
+import type { SellerDeps } from "../api/seller-sheet";
 import { warmCatalogue } from "../api/warm-catalogue";
 import { activeSpreadsheet } from "./adapter";
 
@@ -112,7 +115,58 @@ export function doPostRun(e?: { postData?: { contents?: string } }): GoogleAppsS
   return ContentService.createTextOutput(body).setMimeType(ContentService.MimeType.JSON);
 }
 
+/** Lock, cache, clock and SITE_URL for the seller-sheet handlers (S-15), as doPostRun gives reserve. */
+function sellerDeps(): SellerDeps {
+  return {
+    lock: LockService.getScriptLock(),
+    cache: CacheService.getScriptCache(),
+    now: () => new Date().toISOString(),
+    siteUrl: PropertiesService.getScriptProperties().getProperty("SITE_URL") ?? "",
+  };
+}
+
+/** The part of Apps Script's edit event we use. */
+interface EditEvent {
+  range?: GoogleAppsScript.Spreadsheet.Range;
+  oldValue?: string;
+  value?: string;
+}
+
+/**
+ * S-15: target of the INSTALLABLE on-edit trigger, which the seller adds from the Triggers screen
+ * (from the spreadsheet; no ScriptApp call here, it would need a wider OAuth scope). Named
+ * onClaimsEdit, not onEdit: onEdit would also run as a restricted simple trigger and fire twice.
+ * A multi-cell edit (paste, fill-down, delete) has no single old value, so it runs the full
+ * recalculation instead. Logs counts only, never names or numbers.
+ */
+export function onClaimsEditRun(e?: EditEvent): void {
+  const range = e?.range;
+  if (!range) return;
+  if (range.getNumRows() !== 1 || range.getNumColumns() !== 1) {
+    // The sheet name check keeps a paste on another tab from running the repair.
+    if (range.getSheet().getName() === "Claims") console.log(`multi-cell edit: recalculateAll ${JSON.stringify(recalculateAll(activeSpreadsheet(), sellerDeps()))}`);
+    return;
+  }
+  const edit: ClaimsEdit = {
+    tab: range.getSheet().getName(),
+    row: range.getRow(),
+    column: range.getColumn(),
+    // The event gives strings (and undefined for a cleared or previously empty cell).
+    oldValue: e.oldValue ?? null,
+    newValue: e.value ?? null,
+  };
+  const r = onClaimsEdit(activeSpreadsheet(), edit, sellerDeps());
+  if (r.handled && r.reverted) console.log("onClaimsEdit: a sale was reverted");
+  else if (!r.handled && r.error) console.log(`onClaimsEdit: ${r.error}`);
+}
+
+/** S-15: target of the time-driven trigger, every 10 minutes (the seller adds it in the Triggers screen). */
+export function recalculateAllRun(): void {
+  console.log(`recalculateAll: ${JSON.stringify(recalculateAll(activeSpreadsheet(), sellerDeps()))}`);
+}
+
 // tools/build-gas.mjs bundles this file as the global `A44` and appends top-level
 // `function scrubStaging()`, `function migrateSheet()`, `function addIdColumns()`,
-// `function warmCatalogue()`, `function doGet(e)` and `function doPost(e)` wrappers, because the
+// `function warmCatalogue()`, `function doGet(e)`, `function doPost(e)`, `function onClaimsEdit(e)` and
+// `function recalculateAll()` wrappers, because the
 // editor's Run menu only lists top-level function declarations.

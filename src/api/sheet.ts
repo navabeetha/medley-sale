@@ -21,6 +21,10 @@ export interface Tab {
   appendRow(values: CellValue[]): void;
   /** Append several rows after the last used row in ONE write: all of them or none (QA F1). */
   appendRows(rows: CellValue[][]): void;
+  /** Set a plain-text note on a cell (replacing any earlier one); "" removes it. S-15: why an edit was reverted (6.1.7). */
+  setNote(row: number, col: number, text: string): void;
+  /** The note on a cell, or null when it has none (S-15 QA F3: tell our own note from the seller's). */
+  getNote(row: number, col: number): string | null;
   getComments(): { row: number; col: number }[];
   /** Removes every comment; returns how many were removed. */
   clearComments(): number;

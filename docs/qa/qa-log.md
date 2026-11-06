@@ -1521,3 +1521,114 @@ Still needs a real device: the earlier list, plus a check on iOS Safari and Andr
 - `SITE_URL` and the web-app version are set before the test.
 
 **Verdict: SIGN-OFF.** F1–F4, F6, F7 and F9 are fixed and pinned. R1 (S3) should get a failing test and its one-line fix before G1. R2–R4 are S4s for the PM. F5 (S-13) and F8 (S-10) are carried as recorded.
+
+## 2026-11-06: S-15 seller sheet workflow (branch S-15-seller-sheet-workflow, commits 90b469a red, f25dc7a D-039, 946d405 green), QA
+
+Scope: the installable on-edit handler (`onClaimsEdit`), the 10-minute repair (`recalculateAll`), Status / Person / Message link / sold details written back, plus the carried S-11 fixes R1 (orphan check on the raw grid), R2 (release in an outer finally), R3 (SITE_URL trimmed) and the userinfo coverage item.
+
+### Gate (fresh runs; Playwright and `npm run check` not run by instruction, this story doesn't touch src/site)
+- `npm run typecheck`: ok (both tsconfigs). `npx eslint .`: ok.
+- `npx vitest run`: 37 files, 1117 tests passed.
+- `npm run size`: 5.0 KB gzipped of 50 KB.
+- `node tools/pii-scan.mjs`: 226 files, 0 findings.
+- `npm run build:gas`: built. Top-level functions are exactly scrubStaging, migrateSheet, addIdColumns, warmCatalogue, doGet, doPost, onClaimsEdit, recalculateAll. Nothing is named `onEdit`. No URL, TextEncoder, crypto, fetch, setTimeout, require or process in the bundle. The manifest is unchanged (`spreadsheets.currentonly` only).
+- The odd "Automatic merge went well" line in the Vitest output comes from the existing pii-scan merge test (a throwaway git repo). It is not a problem.
+
+### Red then green
+- The red commit, exported and run on its own: seller-sheet.test.ts fails at import (handlers not written yet), and 9 tests fail in reserve and the bundle test (R1 x5, R2, R3 x2, bundle functions). The green commit touches no test files.
+
+### Verified correct (scratch Vitest against the fake, synthetic data, deleted afterwards)
+- T-02 through edits: quantity 3, 5 claims, second holder released. The 4th claim is stamped, the 5th keeps waiting and Person lists 1, 3, 4. Undoing it (T-06) clears the 4th claim's stamp and restores Person. A later recalculateAll changes nothing.
+- T-07: on a quantity 2 item with 2 sold, a third sale is reverted with an "already sold" note and Status stays Sold. Lowering Quantity to 1 is not reverted (the spec doesn't ask for that). Status stays Sold and both sales are kept.
+- A busy lock gives `busy` and writes nothing. The timed job then repairs Person and Status without a stamp (the D-039 gap, as accepted).
+- The shared lock: a lock that throws on re-entry is never re-entered across recalculateAll, then an edit, then reserve, then an edit. A reserve after a release sees the promoted claim and joins at position 1.
+- Formula-like names (`=IMPORTXML(..)`, `+Bob`, `@Carol`, `-Dee`): no written string on any tab starts with = + - or @. Person is guarded once.
+- Message link: the buyer's digits appear only in the wa.me path, never in the text. The token appears once, in the `/#/b/<token>` line at the end of the text. A newline in a name is flattened. A sold or released row's link is cleared, and a waiter's link says "1st in line".
+- Stability with Sheets-like read-back: apostrophes dropped on write, with and without ISO strings re-parsed as Date. A second recalculateAll writes nothing.
+- R1 replay with every row's State typo'd: the same token comes back, no rows are added, and `units` is `[]` (accepted choice, see F6).
+
+### Findings (worst first)
+- **F1, S2 (S1 if G1 shows it happens): a sale whose event has no oldValue wipes the State cell, and the buyer drops out of the queue.** Repro (fake): quantity 1, claims 1 (holder) and 2. Set claim 1 to `sold` with oldValue null. The result is `reverted`, "That reservation could not be found", and the State cell is written back as blank. The next recalculation drops claim 1 and gives the unit to claim 2. Apps Script documents oldValue as undefined only for a previously empty cell. Whether a phone-app dropdown edit, a single-cell paste or an undo ever omits it is unconfirmed. Fix (failing test first): never write a non-State oldValue back. When oldValue isn't a valid State, don't revert. Recalculate the item from the current claims (as the timed job does) and leave a note if the sold count now exceeds the quantity.
+- **F2, S3: a sort between the edit and the trigger run makes the handler work on the wrong claim.** Repro (fake): release claim 1 (item A), then sort Claims by ID descending before the handler runs. The handler takes the row's new occupant (claim 3, item B) as the edited claim. Item A isn't recalculated, Person still shows the released buyer until the timed job, and the waiter who moved up never gets a Promoted at, so they get no To do row (D-039). The handler never compares `edit.newValue` with what it finds in the grid. Fix: if the grid State at that row isn't `newValue`, treat the edit as stale and run a full recalculation (no stamps) instead.
+- **F3, S3: a typo'd State (e.g. `Sold `) silently takes a claim out of the queue.** The edit gives `handled:false` and nothing is written (no note, so the seller isn't told). The next recalculation drops the claim: the next waiter becomes holder with no stamp, Person no longer lists the buyer, the dropped buyer's Message link still says "reserved for you", and reserve treats the unit as free. Correcting the typo restores the claim by ID. This only happens if the dropdown validation is bypassed: migrate sets `setAllowInvalid(false)`, but only over the rows that existed then, so rows appended later may lack validation (unconfirmed). Fix: on a non-State new value, put a note on the cell ("not a valid State: this claim is out of the queue") and leave everything else alone. Or have the timed job flag such rows.
+- **F4, S3: a Number the seller types as `+919000000012` gets no Message link.** Sheets turns that entry into the number 919000000012, and `normalisePhone` refuses "91…" without a plus, so the link stays blank with no explanation. 10 digits, or `+91 90000 000xx` with spaces, works. Fix: when the Number cell is numeric, 12 digits and starts with 91, treat it as +91. Otherwise, add a runbook note.
+- **F5, S4: no test pins the seller message itself.** `buildSellerMessage` has no direct test. Mutants that survived: every link worded as "reserved for you", even for a waiter (a waiter would be told they hold the item); the newline flattening in the greeting removed; links written for sold or released rows.
+- **F6, S4 (accepted choices, recorded):**
+  - The R1 replay of an all-typo'd booking answers ok with `units: []` and the original token. That's acceptable, since nothing is double-booked.
+  - An undone sale clears Sold at on the edit path only. The timed job leaves a stale Sold at on an active row, which is harmless because the Sold tab filters on State.
+  - Every handled edit clears the note, so it always flushes and clears the cache: one extra call, which is fine.
+  - The 30 s lock wait matches reserve.
+  - Treating `'=X` and `=X` as equal in the stability compare is right for real Sheets read-back.
+
+### Coverage gaps (mutants that survived against seller-sheet + reserve tests)
+- `same()` without the unguarded compare: the fake keeps the apostrophe, so real-Sheets churn would go unseen (my scratch test with Sheets-like read-back passes with the current code).
+- `Sold at` overwritten on every run: no test checks that a later recalculation keeps an existing Sold at. A fixed clock hides it.
+- Promoted at read back as a Date (`instanceof Date` branch removed): untested.
+- Person order on a sorted Claims tab: the sorted test doesn't check Person.
+- A formula-like name that isn't first in Person, and per-name double guarding: untested.
+- Lock wait: only "> 0" is pinned (1 ms survives).
+- Seller message wording, waiter wording and flattening (F5).
+- Equivalent or harmless survivors: a sale check on a sold-to-sold no-op edit, and an unknown item answering `handled:true`.
+- Killed: before-edit state (D-026), revert write, note clear, leftSold, unavailable guard, Notified reset, edited price kept, Person guard, release guarded, recalc previousRole, R1, R3 trim, userinfo, Status boundary.
+
+### Live G1 checks needed (staging only)
+1. The installable trigger fires from the Google Sheets **phone app**. Change a State dropdown on Claims, then confirm that Status, Person and the Sold tab update within seconds. Then do the same from a desktop browser.
+2. `e.oldValue` from the phone app's dropdown, a desktop dropdown, a single-cell paste of `sold`, and Undo. Log whether oldValue is present (log only presence, never values). This settles F1.
+3. A multi-cell paste or fill-down over State runs `recalculateAll` (and nothing else). A paste on another tab does nothing.
+4. Date re-parsing: after a promotion and a sale, check whether Promoted at and Sold at are stored as text or dates. Run recalculateAll twice, and the execution log should show no further rewrites (the stamps keep their value).
+5. Cell notes: a refused sale leaves the note on the State cell, a later accepted edit removes it, and the note is readable in the phone app.
+6. Trigger setup from the editor's Triggers screen: `onClaimsEdit` "From spreadsheet / On edit" and `recalculateAll` time-driven every 10 minutes, with no extra OAuth scope beyond `spreadsheets.currentonly`. LockService and the time trigger run without a permission error.
+7. Data validation on a Claims row appended by reserve after migration still refuses a typed `Sold ` (F3).
+8. Typing `+91…` without spaces into Number (F4).
+
+### Not examined
+- Playwright and `npm run check` (by instruction). The real Apps Script runtime (the bundle was checked statically). T-05 end to end: the back-out API (S-14) isn't on this branch, so only the seller's side was checked (a sale of a released claim is refused with "Only an active reservation…").
+- The To do / Sold FILTER formulas on real Sheets (unchanged, written by migrate). Timing of a recalculateAll on a full-size sheet.
+
+### Verdict
+**NOT YET.** Everything else meets the criteria, and R1–R3 are fixed and pinned. F1 can silently lose a reservation on a plausible platform path, and its fix is small: a failing test, then no write-back of a non-State oldValue. F2–F4 are S3s for the PM to schedule (before G1 is best). F5 and the coverage gaps should be closed in the same bugfix round.
+
+**Re-check, 2026-11-06 (commits 9925e8d red, b0a28bc PM test change, 22d1194 fix, e81483a PM test literal):**
+- **Gate (fresh runs; Playwright not run, same reason):** typecheck ok, eslint ok, Vitest 38 files / 1179 tests passed, size 5.0 KB of 50 KB, pii-scan 227 files / 0 findings, `build:gas` built.
+- **Red then green:** at b0a28bc on its own, 22 tests fail in 3 files. The fix commit touches no tests.
+- **The two PM test changes are legitimate:**
+  - e81483a: the "11-digit" value really had 12 digits starting 91, so it contradicted the F4 link test. It now has 11.
+  - b0a28bc: it drops a hint that a leftover Promoted at proves a claim held before. Reserve never stamps first-time holders, so that inference would be wrong. The test now matches D-039.
+- **F1 fixed.** A sale with no oldValue stays `sold` and State is never blanked. An oversell without oldValue keeps the sale and leaves a note.
+- **F2 fixed for the repro.** A sort before the trigger runs leads to a full repair, so Person is right and nobody is stamped (D-039).
+- **F3 fixed.** A typo'd State gets a note and nothing else is written. Correcting it clears the note, and repeated repairs write nothing.
+- **F4 fixed.** A 12-digit numeric cell starting 91 gets a link. All three call sites are pinned.
+- **F5 fixed:** `buildSellerMessage` now has tests.
+- **Mutation check (new guards):** 18 of 23 mutants went red, covering:
+  - F1: no write-back, no `reverted` result without oldValue, the before-list, the oversell note.
+  - F2: staleness check off, and a stale edit doing nothing.
+  - F3: the edit note; the sync setting, clearing, stability and "clears only ours" checks; the repair calling the sync.
+  - F4: all three call sites, the 11-digit and text cases.
+- **Survivors:**
+  - Two are equivalent: previousRoles without oldValue, and the leftSold guard.
+  - Untested: the blank normalisation in the staleness check.
+  - Untested: the blank-newValue early return. Without it, a blank cell gets a NOT_A_STATE note that the next timed run removes.
+  - Untested: the "needs a Claim ID" condition for the typo note.
+- **Unforced choices, judged:**
+  - A blank newValue takes the lock and writes nothing, and leaves a stale note for the timed job to clear. Acceptable.
+  - The sync clears our note when the cell is emptied. Correct, because the note only ever describes a typo.
+  - The F1 oversell check treats the edited claim as `active` in the before-list. Acceptable, since without oldValue we can't know better.
+
+**New findings (re-check):**
+- **F7, S3 (suspected, needs a live timing): one `getNote` call per Claims row inside the lock.** `syncStateNotes` makes a separate Range.getNote call for every row, on every timed run and every F2 repair. 300 claims means 300 calls while the script lock is held, which could push a parallel reserve towards `busy` (30 s wait). Fix: read the State column's notes in one batch (add a column-notes read to the Tab interface).
+- **F8, S3: clearing a claim's State with Delete takes it out of the queue with no note.** Repro (fake): quantity 1, holder 1 and waiter 2. Clear claim 1's State. The edit gives `handled:false`, and the next repair makes claim 2 the holder. There is no note because blank is not a typo. Reselecting `active` restores the claim by ID. Fix: also note a blank State on a row with a Claim ID.
+- **F9, S4: a sort that leaves a claim with the same State on the edited row is not detected.** The handler then recalculates the wrong item. The timed job repairs it within 10 minutes, but the promotion stamp is lost (D-039). Rare.
+- **F10, S4: every accepted edit clears any note on that State cell, including one the seller wrote.** Now that `getNote` exists, clear only our own notes (NOT_A_STATE or a refusal reason).
+
+**Updated live G1 checks (staging):**
+1. The trigger fires from the Sheets phone app and from a desktop browser.
+2. Whether `e.oldValue` and `e.value` are present for a phone dropdown, a desktop dropdown, a single-cell paste and Undo. Log presence only.
+3. A multi-cell paste on Claims runs the repair; one on another tab does nothing.
+4. Promoted at and Sold at stored as text or dates; a second repair rewrites nothing.
+5. Refusal and NOT_A_STATE notes show in the phone app and clear when the cell is fixed.
+6. Both triggers can be set up from the Triggers screen with only `spreadsheets.currentonly`.
+7. Book enough units to run Claims past its last grid row. The rows land directly under the last claim and carry the State dropdown, and typing `Sold ` is refused there.
+8. Time recalculateAll with a realistic number of Claims rows (G1). If it takes more than a few seconds, batch the note reads first (F7). Run a reserve during it and confirm it doesn't answer `busy`.
+9. A `+91…` number typed without spaces in Number gets a link.
+
+**Verdict (re-check): SIGN-OFF.** F1–F5 are fixed and pinned. F7 and F8 are S3s for the PM, best done before the G1 gate (F7 at least measured). F9 and F10 are S4s.
