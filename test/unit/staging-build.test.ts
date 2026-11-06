@@ -1,14 +1,19 @@
 // G1 (PM): the Pages site carries a second copy at /staging/ that talks to the build copy's staging deployment,
 // so the seller can try reserving on her phone without touching the live (real-sheet, browse-only) site.
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
 import { API_URL } from "../../src/site/config";
 import { API_URL as STAGING_API_URL } from "../../src/site/config.staging";
 
+// Built into a temp folder: rebuilding dist/ here would delete dist/appscript while appscript-bundle.test.ts reads it.
+const OUT = join(mkdtempSync(join(tmpdir(), "medley-build-")), "dist");
+
 describe("staging build", () => {
   beforeAll(() => {
-    execFileSync("node", ["tools/build.mjs"], { stdio: "ignore" });
+    execFileSync("node", ["tools/build.mjs", OUT], { stdio: "ignore" });
   }, 60_000);
 
   it("the two configs point at different script.google.com deployments", () => {
@@ -17,8 +22,8 @@ describe("staging build", () => {
   });
 
   it("the live bundle uses only the live API and the staging bundle only the staging API", () => {
-    const live = readFileSync("dist/main.js", "utf8");
-    const staging = readFileSync("dist/staging/main.js", "utf8");
+    const live = readFileSync(join(OUT, "main.js"), "utf8");
+    const staging = readFileSync(join(OUT, "staging/main.js"), "utf8");
     expect(live).toContain(API_URL);
     expect(live).not.toContain(STAGING_API_URL);
     expect(staging).toContain(STAGING_API_URL);
@@ -26,8 +31,8 @@ describe("staging build", () => {
   });
 
   it("the staging copy has its page and styles, and is kept out of search", () => {
-    expect(existsSync("dist/staging/style.css")).toBe(true);
-    const html = readFileSync("dist/staging/index.html", "utf8");
+    expect(existsSync(join(OUT, "staging/style.css"))).toBe(true);
+    const html = readFileSync(join(OUT, "staging/index.html"), "utf8");
     expect(html.match(/<meta name="robots" content="noindex">/g)).toHaveLength(1); // inherited from public/, not doubled
   });
 });
