@@ -133,7 +133,7 @@ function readClaims(ss: Spreadsheet): ClaimInput[] {
  * a stray trunk 0 (+91 0...). Null means the site shows no reserve link rather
  * than a wrong one.
  */
-function contactUrl(raw: string | undefined): string | null {
+export function contactUrl(raw: string | undefined): string | null {
   if (typeof raw !== "string") return null;
   const stripped = raw.replace(/[\s+\-()[\]]/g, "");
   if (!/^\d+$/.test(stripped)) return null;
@@ -219,7 +219,10 @@ function tabItems(tab: Tab, mode: Mode, claims: ClaimInput[], photoCounts: Recor
   return out;
 }
 
-export function catalogue(ss: Spreadsheet, opts: CatalogueOptions = {}): { items: CatalogueItem[]; contactUrl: string | null } {
+export function catalogue(
+  ss: Spreadsheet,
+  opts: CatalogueOptions = {},
+): { items: CatalogueItem[]; contactUrl: string | null; reserving: boolean } {
   const mode: Mode = ss.getTab("Claims") ? "claims" : "status";
   const claims = readClaims(ss);
   const photoCounts = opts.photoCounts ?? {};
@@ -228,5 +231,7 @@ export function catalogue(ss: Spreadsheet, opts: CatalogueOptions = {}): { items
     .getTabs()
     .filter((t) => ITEM_TABS.includes(t.name))
     .flatMap((t) => tabItems(t, mode, claims, photoCounts, formatDate));
-  return { items, contactUrl: contactUrl(opts.sellerWhatsapp) };
+  // D-038 rule 6: the site switches between browse-only and reserving from this flag.
+  // It follows the Claims TAB, not its contents, so an empty Claims tab already means reserving.
+  return { items, contactUrl: contactUrl(opts.sellerWhatsapp), reserving: mode === "claims" };
 }

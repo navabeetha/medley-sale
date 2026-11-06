@@ -16,7 +16,7 @@ await build({
   legalComments: "none",
   // Top-level declarations so the editor's Run menu lists them.
   footer: {
-    js: "function scrubStaging() { A44.scrubStagingRun(); }\nfunction migrateSheet() { A44.migrateSheetRun(); }\nfunction addIdColumns() { A44.addIdColumnsRun(); }\nfunction warmCatalogue() { A44.warmCatalogueRun(); }\nfunction doGet(e) { return A44.doGetRun(e); }\n",
+    js: "function scrubStaging() { A44.scrubStagingRun(); }\nfunction migrateSheet() { A44.migrateSheetRun(); }\nfunction addIdColumns() { A44.addIdColumnsRun(); }\nfunction warmCatalogue() { A44.warmCatalogueRun(); }\nfunction doGet(e) { return A44.doGetRun(e); }\nfunction doPost(e) { return A44.doPostRun(e); }\n",
   },
 });
 cpSync("src/appscript/appsscript.json", `${out}/appsscript.json`);

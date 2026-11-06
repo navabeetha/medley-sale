@@ -288,7 +288,7 @@ interface ItemRow {
   status: string;
 }
 
-const hex = (bytes: Uint8Array): string =>
+export const hex = (bytes: Uint8Array): string =>
   Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 
 /** Items tabs: everything that is not README, Template or a system tab. */
