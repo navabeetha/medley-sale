@@ -1,12 +1,15 @@
 // Catalogue screen (S-06, D-034 browse-only). Fetches the catalogue, shows the last good list
 // from localStorage straight away, and renders rows. All data goes in via textContent only.
 import type { CatalogueItem } from "../api/catalogue";
+import { createBasketView } from "./basket-view";
 import { API_URL } from "./config";
+import { el } from "./dom";
 import {
   availabilityLabels, displayTitle, formatPrice, pickupLabel, reserveUrl, sortItems, subtitle, validItems,
 } from "./view-model";
 
-interface Catalogue { items: CatalogueItem[]; contactUrl: string | null }
+// `reserving` is D-038 rule 6: true only when the response says exactly `true`; the cache keeps it.
+interface Catalogue { items: CatalogueItem[]; contactUrl: string | null; reserving: boolean }
 interface Photo { thumb: string; alt: string }
 
 const CACHE_KEY = "medley-sale:catalogue:v1";
@@ -14,22 +17,14 @@ const MANIFEST_KEY = "medley-sale:manifest:v1";
 const TIMEOUT_MS = 20_000; // D-033: warm misses reach 13 s; give up well after that
 const WA_PREFIX = "https://wa.me/";
 
-function el<K extends keyof HTMLElementTagNameMap>(tag: K, text?: string, cls?: string, testid?: string): HTMLElementTagNameMap[K] {
-  const e = document.createElement(tag);
-  if (text !== undefined) e.textContent = text;
-  if (cls) e.className = cls;
-  if (testid) e.dataset.testid = testid;
-  return e;
-}
-
 // ---- cache (localStorage may be blocked or corrupt: every access is guarded) ----
 
 function parseCatalogue(v: unknown): Catalogue | null {
-  const o = v as { items?: unknown; contactUrl?: unknown } | null;
+  const o = v as { items?: unknown; contactUrl?: unknown; reserving?: unknown } | null;
   if (!o || typeof o !== "object" || !Array.isArray(o.items) || "error" in o) return null;
   // Only a wa.me link is ever used as a contact URL, whatever the response says.
   const c = typeof o.contactUrl === "string" && o.contactUrl.startsWith(WA_PREFIX) ? o.contactUrl : null;
-  return { items: validItems(o.items), contactUrl: c };
+  return { items: validItems(o.items), contactUrl: c, reserving: o.reserving === true };
 }
 
 function readCache(): Catalogue | null {
@@ -133,6 +128,7 @@ function start(root: HTMLElement): void {
     status, notes, list,
   );
 
+  const basket = createBasketView();
   let photos: Manifest = readManifestCache(); // last good manifest: repeat visits show thumbnails at once
   let contactUrl: string | null = null;
   let hasList = false;
@@ -157,7 +153,8 @@ function start(root: HTMLElement): void {
     contactUrl = c.contactUrl ?? contactUrl;
     hasList = true;
     const items = sortItems(c.items);
-    list.replaceChildren(...items.map((i) => row(i, c.contactUrl, firstPhoto(photos, i.id))));
+    basket.sync(c.items, c.reserving); // before the rows, which ask it for their controls
+    list.replaceChildren(...items.map((i) => row(i, c.contactUrl, firstPhoto(photos, i.id), basket.control(i))));
     const lines: HTMLElement[] = [];
     if (items.length === 0) {
       lines.push(el("p", "Nothing is listed right now. Please check back soon."));
@@ -239,7 +236,7 @@ function fillSlot(slot: HTMLElement, photo: Photo): void {
   slot.replaceChildren(img);
 }
 
-function row(item: CatalogueItem, contactUrl: string | null, photo: Photo | undefined): HTMLElement {
+function row(item: CatalogueItem, contactUrl: string | null, photo: Photo | undefined, control: HTMLElement | null): HTMLElement {
   const li = el("li", undefined, "row", "item-row");
   li.dataset.id = item.id;
   // The 72 px slot is reserved when a photo is known or expected, so a late manifest causes no shift.
@@ -257,7 +254,9 @@ function row(item: CatalogueItem, contactUrl: string | null, photo: Photo | unde
   body.append(meta);
   const labels = availabilityLabels(item);
   if (labels.length) body.append(el("p", labels.join(" · "), "status", "item-status"));
-  const href = reserveUrl(contactUrl, item.name);
+  // Reserving mode (S-09) swaps the per-card WhatsApp link for the basket control.
+  const href = control ? null : reserveUrl(contactUrl, item.name);
+  if (control) body.append(control);
   if (href) {
     const a = el("a", "Message to reserve", "reserve");
     a.href = href;
