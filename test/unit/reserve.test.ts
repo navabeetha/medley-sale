@@ -258,7 +258,7 @@ describe("reserve: saving a booking (rows written)", () => {
       State: "active", Created: NOW,
     });
     expect(bookingsOf(h.ss)).toHaveLength(1);
-    expect(bookingsOf(h.ss)[0]).toMatchObject({ "Booking ID": r.bookingId, Token: r.token, Name: "Asha Testperson", Created: NOW });
+    expect(bookingsOf(h.ss)[0]).toMatchObject({ "Booking ID": r.bookingId, Token: `'${r.token}`, Name: "Asha Testperson", Created: NOW }); // stored guarded (QA F9)
   });
 
   it("returns exactly the documented keys on success", () => {
