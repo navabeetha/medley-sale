@@ -1255,3 +1255,52 @@ Pixel profiles for the scratch repros (iPhone profiles only; the gate covers all
 
 ### Verdict
 **Passes QA.** F1–F5 are fixed and pinned by tests, there are no regressions, and CLS is under 0.1 with a delayed manifest. F7 (S3, a server-typed payload makes it unlikely) and F8/F9 (S4) go to the PM as follow-ups; F7 should get a failing test and fix before G1. The F6 seller copy confirmation is still open.
+
+## 2026-11-06: D-037 link tracking strip (branch R1-link-tracking, commits 7f550b9 red, 1f53c7b green)
+
+**What changed:** `safeLink()` in `src/api/catalogue.ts` now passes http(s) links through `stripTracking()`. Amazon hosts (`amazon.<tld>` or a subdomain of one) lose the whole query string. Other hosts lose only the D-037 tracker names (case-insensitive). The fragment is kept, and the `?` goes if nothing is left. It is plain regex and string code, because Apps Script has no `URL` class. The tests are the `tracking parameters (D-037)` block in `test/unit/catalogue.test.ts`, 14 cases.
+
+**Gate (fresh `npm run check`, exit 0):** tsc ok, eslint ok, Vitest 31 files / 757 tests passed, Playwright 352 passed / 4 skipped, size 3.4 KB of 50 KB gzipped, pii-scan 203 files / 0 findings. Red-then-green order is visible in the history.
+
+**Apps Script bundle:** `npm run build:gas` was rebuilt fresh. The new code in `dist/appscript/Code.js` uses only regex, `split`, `filter`, destructuring and a template string. It contains no `new URL(`, `URLSearchParams`, `?.` or `??` (esbuild lowers these). There is no `g` flag on the module-level regexes, so no `lastIndex` state can carry over between calls.
+
+**Exploratory probe:** I bundled the real handler against the fake sheet in a scratch dir and fed it 32 synthetic links. Results:
+- Fine: uppercase host and scheme; port (`:443` on Amazon, `:8080` elsewhere); trailing-dot host; `evilamazon.in` and `notamazon.in` (not treated as Amazon); `?` alone; `?#x`; params without `=` (`gclid` dropped, `id` kept); `?` inside the fragment (left alone); `;` separators (left alone; the whole `id=1;gclid=2` is one param); `ftp:`, `javascript:` and `mailto:` still give null.
+- Very long links don't crash or slow down: a 200 KB query with 10,000 trackers took 2 ms, a 140 KB host 0 ms, and a 100 KB path 0 ms.
+- No input crashed the catalogue.
+
+**Mutation check** (scratch copy, D-037 block only):
+- Caught: dropping the `(^|\.)` boundary (the `notamazon.example` case goes red) and allowing only single-label TLDs.
+- Survived: making the Amazon regex case-sensitive, removing the port strip, and keeping empty params.
+
+### Findings
+
+**F1, S3 (low likelihood): a non-Amazon host with an `amazon.` label in it is treated as Amazon and loses its whole query.** `AMAZON_HOST = /(^|\.)amazon\.[a-z.]+$/i` accepts any run of labels after `amazon.`, so `amazon.in.evil.example` and `www.amazon.in.evil.example` match. That is wider than D-037.1 ("`amazon.<tld>` or a subdomain"). A functional param on such a host would be removed, and the link might stop working. Repro: `https://amazon.in.evil.example/p?id=7&gclid=1` gives `https://amazon.in.evil.example/p` (expected `…/p?id=7`). This is unlikely on the seller's sheet. Fix direction: restrict the TLD part, e.g. `amazon\.(?:com?\.)?[a-z]{2,3}$`, with a failing test first.
+
+**F2, spec note for the PM (S3 if such links exist): Amazon links that aren't product links lose their working query.** D-037.1 assumes nothing functional lives in an Amazon query. That holds for `/dp/<ASIN>`, but not for search or listing pages. Repro: `https://www.amazon.in/s?k=lamp&ref=nb` gives `https://www.amazon.in/s`, a generic page. The code follows the spec. The PM should confirm on the live response (T-12 scan; QA may not read the real sheet) that every Amazon link is a `/dp/` or `/gp/product/` link.
+
+**F3, S4: two tracker forms slip through.**
+- An Amazon host behind userinfo is not recognised, so its query is kept. Repro: an `https://` link to `amazon.in/dp/X?a=1` with a userinfo part (user name, then the at sign) before the host comes back unchanged.
+- Percent-encoded tracker names are not matched. Repro: `https://shop.example/p?utm%5Fsource=x&id=1` comes back unchanged.
+
+Both forms would only carry the seller's own tracking, which is what D-037 removes, and neither is plausible from copy-pasted shop links.
+
+**F4, S4 (note only): empty params are normalised away.** Repro: `https://shop.example/p?a=1&&gclid=2&` gives `https://shop.example/p?a=1`. This is harmless and arguably intended.
+
+### Coverage gaps (no test would go red)
+- Amazon host matching ignores case: there is no uppercase-host case, and the case-sensitive mutant survived.
+- The port strip before the Amazon test: there is no `amazon.<tld>:port` case, and the mutant survived.
+- The empty-param filter (`p !== ""`): there is no `?&a=1` case, and the mutant survived.
+- No test pins F1, the spec boundary on the right-hand side (`amazon.in.evil.example` must keep its query).
+
+### Manual checks still needed
+- On the live catalogue response after the push: no item link contains `hvlocphy`, `gclid`, `utm_` or `gad_`, and every Amazon link is a `/dp/` style product link (F2). Open two or three stripped links on a phone and confirm they land on the right product.
+
+### Not verified
+- The real sheet or live response (rule 4 / PM's T-12 scan).
+- Running the bundle inside the actual Apps Script runtime (checked statically only).
+- Non-ASCII or IDN hosts.
+- Links with whitespace inside a single URL (pre-existing `safeLink` behaviour takes the first run).
+
+### Verdict
+**Passes QA (sign-off)**, with F1 (S3, low likelihood, a spec deviation) and the three coverage gaps going to the PM as follow-ups. F1 should get a failing test and a fix before any wider sharing. F2 needs a PM check on the live response. Note: during this review `docs/backlog/STATUS.md` showed an uncommitted edit made by another agent. QA did not touch it.

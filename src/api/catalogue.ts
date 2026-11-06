@@ -90,7 +90,9 @@ function safeLink(url: string | undefined): string | null {
 // (/dp/<ASIN>), so their whole query goes; elsewhere only known tracker names go, so a
 // functional parameter (a product or region id) still works. Plain string parsing on
 // purpose: the Apps Script runtime has no URL class.
-const AMAZON_HOST = /(^|\.)amazon\.[a-z.]+$/i;
+// Real storefronts only: amazon.in, amazon.eg, amazon.com, amazon.com.au, amazon.co.uk.
+// Not amazon.in.evil.example (QA D-037 F1).
+const AMAZON_HOST = /(^|\.)amazon\.(?:com?\.)?[a-z]{2,3}$/i;
 const TRACKER = /^(utm_\w+|gclid|gbraid|wbraid|dclid|gad_\w+|fbclid|msclkid|mc_cid|mc_eid|igshid|_ga|_gl|yclid|ttclid)$/i;
 
 function stripTracking(link: string): string {

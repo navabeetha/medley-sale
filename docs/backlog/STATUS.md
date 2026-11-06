@@ -1,47 +1,19 @@
 # Status board
 
-*Maintained by the PM and updated after every story. Last updated: 2026-11-05 (S-05 Done, photos published; S-04 waits on the web-app URL).*
+*Maintained by the PM and updated after every story. Last updated: 2026-11-06 (R1 shipped on the real sheet; S-04 and S-06 Done; D-037 link-tracking strip in QA).*
 
 **Scope:** MVP only (brief Section 8), 43 points in 4 slices, worked in order.
-**Now:** S-01, S-02, S-03 and S-05 Done. S-04 (catalogue API, [D-030](../decisions/D-030-catalogue-shape.md)) and S-05 (photo pipeline, [D-029](../decisions/D-029-photo-pipeline-edge-cases.md), [D-031](../decisions/D-031-photo-pipeline-hardening.md)) passed QA (several fix rounds, see the qa-log) and are merged to `main` 2026-11-05. **S-04 isn't Done until its live checks pass.** The S-04 script is pushed to the build copy (2026-11-05 17:49).
+**Now:** **Release R1 is live (2026-11-06)**: https://navabeetha.github.io/medley-sale/ reads the seller's real sheet through the "R1 catalogue" web app (browse-only, [D-034](../decisions/D-034-browse-only-first-release.md) to [D-036](../decisions/D-036-r1-qa-hardening.md)). S-01 to S-06 Done. Nothing has been posted to the group yet; when to share is the seller's call.
 
-**Release R1, browse-only, target evening of 2026-11-06 ([D-034](../decisions/D-034-browse-only-first-release.md), [D-035](../decisions/D-035-browse-only-on-real-sheet.md)).** The seller chose: Slice 1 only (S-06, S-07, S-08), "Message to reserve" by WhatsApp, the catalogue kept warm every 5 minutes, reading her **real sheet** (ID and Quantity columns only, status mode without Claims). She'll decide afterwards whether to wait for online reserving before posting widely.
-- **Scope cut (seller, 2026-11-05):** R1 is the S-06 list of cards only. S-07 (filter and search) and S-08 (item view) move to the next slice. Partial S-07 red tests are parked, unverified, on branch `S-07-filter-search`.
-- **Merged to main, local and unpushed:** the R1 backend (D-034, D-035, D-036; QA pass) and S-06 with F1 to F9 fixed (QA pass). The gate is green with blocked words: 743 unit, 352 e2e, 3.4 KB. **Don't push until the real-sheet API URL is set**, because a push deploys Pages, and today `API_URL` points at staging.
-- **Seller confirmed copy:** "All prices negotiable.", "Books: Free for libraries and students.", and the reserve message "Hi! I'd like to reserve: <name>".
-- **Seller's steps tomorrow** (about 15 minutes, 11.7 format):
-  - back up the real sheet;
-  - give the script ID;
-  - run `addIdColumns`;
-  - set `SELLER_WHATSAPP`;
-  - add the 5-minute trigger;
-  - deploy the web app;
-  - hand-fix the text typos if she wants.
-- **PM checks before sharing:**
-  - IDs match the build copy, so the photos land on the right items;
-  - the T-12 scan on the live response;
-  - CORS from Pages;
-  - timings.
+**R1 release record (2026-11-06):**
+- **Seller setup, all done:** backup copy (kept in her Drive); the real sheet's script ID in a separate gitignored clasp config (`.clasp.real.json`; push with `npx clasp -P .clasp.real.json push -f`); `addIdColumns` gave 8 columns, 65 IDs, 65 quantities; `SELLER_WHATSAPP` set; `warmCatalogue` every 5 minutes; web app deployed (Execute as Me, Anyone); Notes and links read by her.
+- **PM checks, all passed:** 62 live items match staging by ID, name, tab and photos (the 3 extra IDs are rows the catalogue hides, as on staging); T-12 clean apart from 4 Amazon tracking-query links (no neighbour data; led to D-037); `contactUrl` is `wa.me/91` + 10 digits; CORS `*` on both hops; 1.4 to 2.1 s warm. Gate 743 unit, 352 e2e, 3.4 KB, pii clean. Pages deploy green; a WebKit iPhone run on the live page showed 62 reserve links in 2.6 s, 0.3 s on a second visit, prefill correct.
+- **Seller phone check, passed.** Two notes: (1) the reserve message should include the **brand** ("Air purifier" alone was ambiguous); recorded on [S-13](stories/S-13-whatsapp-handoff.md) for the message work. (2) Strip link tracking: [D-037](../decisions/D-037-strip-link-tracking.md), on branch `R1-link-tracking`, in QA.
 
-**Resume here (2026-11-06 morning, R1 release day):**
-1. **Seller real-sheet setup**, one 11.7 step at a time (about 15 to 20 minutes):
-   - backup copy;
-   - the real sheet's script ID, into a separate untracked clasp config, never committed;
-   - the PM pushes the bundle;
-   - the seller runs `addIdColumns` (approve permissions once) and pastes the counts;
-   - Script Property `SELLER_WHATSAPP` (91 plus 10 digits, D-036);
-   - a 5-minute time trigger on `warmCatalogue`;
-   - deploy the web app (Execute as Me, Anyone) and send the `/exec` URL;
-   - read Notes and links once for names or numbers.
-2. **PM checks** (30 to 45 minutes):
-   - names per ID against staging for **every** ID (photos are named by build-copy ID; QA R1 finding 4);
-   - a T-12 scan of the live JSON;
-   - `contactUrl` is `wa.me/91` plus 10 digits;
-   - CORS and timings with the warm job on;
-   - set `API_URL` in `src/site/config.ts`, run the gate, push, and check the Pages deploy.
-3. **Seller phone check:** the list loads; "Message to reserve" prefills correctly (don't send); a second visit is instant.
-4. **Then:** mark S-04 and S-06 Done and update the burn-up. Plan the next slice (S-07, S-08, or online reserving), as the seller decides.
-- **Open S4 follow-ups:** D-028 error wording; 16-bit greyscale; broken rels traceback; Python 3.9 end of life; migrate's per-row `getGrid` slowness; `doGet` cache/ContentService outside the try; silent `unavailable` errors; F-A to F-D and R2 to R6. From the R1 QA: the bundle and scope are now pinned (D-036).
+**Resume here:**
+1. **D-037:** after QA sign-off, merge `R1-link-tracking`, push, then `npm run build:gas`, `npx clasp -P .clasp.real.json push -f`, and `clasp redeploy` the "R1 catalogue" deployment to a new version (same URL). Check the live response has no query on Amazon links. Optionally push the same build to staging.
+2. **Plan the next slice** with the seller: S-07 (filter and search), S-08 (item view), or online reserving (Slice 2). Whichever comes first, fold in the brand-in-message note.
+3. **Carry-over follow-ups:** `pii-scan`'s tracked-clasp path rule still matches only `.clasp.json` (the gitignore now covers `.clasp*.json`); D-028 error wording; 16-bit greyscale; broken rels traceback; Python 3.9 end of life; migrate's per-row `getGrid` slowness; `doGet` cache/ContentService outside the try; silent `unavailable` errors; F-A to F-D and R2 to R6.
 
 **Live headings (Books row 2):** Author, Brand (+ Link), Available from, Status, Price, Photos, (blank), (blank), Notes, Person.
 
@@ -65,17 +37,17 @@ G0 is staged per [D-018](../decisions/D-018-g0-in-stages.md). Steps: [docs/runbo
 
 | Backlog | Ready | In progress | In QA | Done |
 |---|---|---|---|---|
-| S-06 to S-18 | none | none | S-04 (merged; live checks pending) | S-01, S-02, S-03, S-05 |
+| S-07 to S-18 | none | none | none | S-01 to S-06 |
 
 ## Slices
 
 | Slice | Stories | Pts | Done pts | Exit | Status |
 |---|---|---|---|---|---|
-| 1. See the sale | S-01 to S-08 | 20 | 12 | Catalogue live, and D-001 proven | In progress |
+| 1. See the sale | S-01 to S-08 | 20 | 17 | Catalogue live, and D-001 proven | In progress (R1 live; S-07, S-08 left) |
 | 2. Reserve | S-09 to S-13 | 11 | 0 | Reserve through to the WhatsApp URL | Not started |
 | 3. Back out and sell | S-14 to S-16 | 8 | 0 | Full loop on staging, then G1 | Not started |
 | 4. Release | S-17, S-18 | 4 | 0 | Link ready for the group (G2) | Not started |
-| **Total** | | **43** | **12** | | |
+| **Total** | | **43** | **17** | | |
 
 ## Stories
 
@@ -84,9 +56,9 @@ G0 is staged per [D-018](../decisions/D-018-g0-in-stages.md). Steps: [docs/runbo
 | [S-01](stories/S-01-scaffold-ci-pages.md) | Scaffold, CI and Pages deploy | 2 | 1 | none | Done (QA signed off; deploy verified 2026-11-03) | G0.1 done |
 | [S-02](stories/S-02-queue-engine.md) | Queue engine with quantity | 5 | 1 | S-01 | Done (QA signed off) | |
 | [S-03](stories/S-03-sheet-schema-migration.md) | Sheet schema and migration | 3 | 1 | S-01 | Done (QA signed off; live checks passed 2026-11-05) | G0.3 done |
-| [S-04](stories/S-04-catalogue-api.md) | Catalogue API | 2 | 1 | S-02, S-03 | In QA: merged, live checks pending | D-001 go or no-go |
+| [S-04](stories/S-04-catalogue-api.md) | Catalogue API | 2 | 1 | S-02, S-03 | Done (live checks passed on the real sheet 2026-11-06) | D-001 go |
 | [S-05](stories/S-05-photo-pipeline.md) | Photo pipeline | 2 | 1 | S-03 | Done (live run and seller review passed 2026-11-05) | Export done |
-| [S-06](stories/S-06-catalogue-screen.md) | Catalogue screen | 3 | 1 | S-04 | In QA: QA passed and merged; live phone check pending | |
+| [S-06](stories/S-06-catalogue-screen.md) | Catalogue screen | 3 | 1 | S-04 | Done (seller phone check passed 2026-11-06) | |
 | [S-07](stories/S-07-filter-search.md) | Filter and search | 1 | next | S-06 | Backlog (moved after R1) | |
 | [S-08](stories/S-08-item-view.md) | Item view | 2 | next | S-05, S-06 | Backlog (moved after R1) | |
 | [S-09](stories/S-09-basket.md) | Basket | 2 | 2 | S-06 | Backlog | |

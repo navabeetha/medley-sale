@@ -5,7 +5,7 @@
 
 ## Decisions
 
-1. **Amazon links lose their whole query string.** Host `amazon.<tld>` or a subdomain of it. The product is identified in the path (`/dp/<ASIN>`), so nothing functional lives in the query. The path, including any `/ref=…` segment, is kept.
+1. **Amazon links lose their whole query string.** Host `amazon.<tld>` (two or three letters, optionally after `com.` or `co.`, e.g. `amazon.com.au`, `amazon.co.uk`) or a subdomain of it. A look-alike such as `amazon.in.evil.example` isn't treated as Amazon (QA F1). The product is identified in the path (`/dp/<ASIN>`), so nothing functional lives in the query. The path, including any `/ref=…` segment, is kept.
 2. **Other links lose only known tracker parameters**, matched by name, case-insensitively: `utm_*`, `gclid`, `gbraid`, `wbraid`, `dclid`, `gad_*`, `fbclid`, `msclkid`, `mc_cid`, `mc_eid`, `igshid`, `_ga`, `_gl`, `yclid`, `ttclid`. Everything else is kept in order (e.g. `region_id`, `pid`), so a link never stops working.
 3. **The fragment (`#…`) is kept.** If no parameters remain, the `?` goes too.
 4. **Done in the API (`safeLink` in `src/api/catalogue.ts`)**, not the site, so the tracking never leaves the script. Plain string parsing, because Apps Script has no `URL` class. The sheet itself is never changed.
