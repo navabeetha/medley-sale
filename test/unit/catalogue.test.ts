@@ -146,6 +146,46 @@ describe("catalogue: fields across all four tabs (4.3)", () => {
     (ss.getTab("Tech") as FakeTab).setLink(4, 2, "javascript:alert(1)");
     expect(byName(items(ss), "Tripod").link).toBeNull();
   });
+
+  // D-037 (seller, 2026-11-06): ad and click tracking is stripped from public links.
+  // Amazon keeps no query at all (the product is in the path); other sites lose only
+  // known tracking parameters and keep the rest (e.g. a region_id the page may need).
+  describe("tracking parameters (D-037)", () => {
+    const linkFor = (url: string): unknown => {
+      const ss = build();
+      (ss.getTab("Tech") as FakeTab).setLink(4, 2, url);
+      return byName(items(ss), "Tripod").link;
+    };
+
+    it.each([
+      ["https://www.amazon.in/Some-Thing/dp/B0TEST1234/ref=sr_1_1?dib=abc&hvlocphy=1007&qid=17&sr=8-1", "https://www.amazon.in/Some-Thing/dp/B0TEST1234/ref=sr_1_1"],
+      ["https://www.amazon.com.au/dp/B0TEST1234?psc=1&smid=X1", "https://www.amazon.com.au/dp/B0TEST1234"],
+      ["https://amazon.eg/dp/B0TEST1234?th=1", "https://amazon.eg/dp/B0TEST1234"],
+      ["https://www.amazon.in/dp/B0TEST1234?ref_=x#reviews", "https://www.amazon.in/dp/B0TEST1234#reviews"],
+    ])("drops the whole query on an Amazon link: %s", (url, want) => {
+      expect(linkFor(url)).toBe(want);
+    });
+
+    it.each([
+      ["https://shop.example.com/p/lamp?gad_source=1&gad_campaignid=2&gbraid=3&gclid=4", "https://shop.example.com/p/lamp"],
+      ["https://shop.example.com/p/lamp?utm_source=a&utm_medium=b&fbclid=c&msclkid=d", "https://shop.example.com/p/lamp"],
+      ["https://shop.example.com/p/lamp?region_id=5&gclid=4", "https://shop.example.com/p/lamp?region_id=5"],
+      ["https://shop.example.com/p/lamp?gclid=4&pid=LMP1&utm_campaign=x", "https://shop.example.com/p/lamp?pid=LMP1"],
+      ["https://shop.example.com/p/lamp?GCLID=4", "https://shop.example.com/p/lamp"],
+      ["https://shop.example.com/p/lamp?gclid=4#specs", "https://shop.example.com/p/lamp#specs"],
+    ])("drops only known trackers on other sites: %s", (url, want) => {
+      expect(linkFor(url)).toBe(want);
+    });
+
+    it.each([
+      "https://shop.example.com/p/lamp",
+      "https://shop.example.com/p/lamp?pid=LMP1&lid=2",
+      "https://www.goodreads.com/book/show/123.Some_Book",
+      "https://notamazon.example/dp/X?keep=1",
+    ])("leaves a link with no tracking unchanged: %s", (url) => {
+      expect(linkFor(url)).toBe(url);
+    });
+  });
 });
 
 describe("catalogue: Books mapping (4.1, D-028)", () => {
