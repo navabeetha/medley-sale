@@ -12,6 +12,8 @@
 //   - Exactly 10 digits and no "+": India, so "+91" is prefixed.
 //   - A leading "+": the digits after it must be a plausible international number:
 //     no leading 0 (no country code starts with 0) and at most 15 digits (E.164).
+//   - (QA F7, D-036) A trunk 0 is refused: ten digits starting with 0 (so no "+91" is put in front of it), and "+91"
+//     followed by a 0, with or without brackets or spaces around it. The stored E.164 would be invalid.
 //   - Anything else is rejected: no "+" with a length other than 10 digits (so a
 //     national "0..." form, or "91..." typed without the "+", is refused rather
 //     than guessed at), letters, a "+" anywhere but the start, non-strings, empty.
@@ -47,6 +49,22 @@ describe("normalisePhone: accepted forms", () => {
     expect(normalisePhone("9000000011")).toBe("+919000000011");
     expect(normalisePhone("900000001")).toBeNull();
     expect(normalisePhone("90000000112")).toBeNull();
+  });
+
+  it.each([
+    ["ten digits starting with 0", ("09000" + "00011")],
+    ["ten zeros", ("0000" + "000000")],
+    ["+91 then a 0 and ten digits", ("+91 0" + "9000 00099")],
+    ["+91 then a 0 and nine digits", ("+910" + "900000011")],
+    ["+91 then a bracketed (0)", ("+91 (0) 9000" + "0 00011")],
+    ["+91 then a 0, dashed", ("+91-0" + "9000-00011")],
+  ])("refuses a trunk 0 (QA F7): %s", (_label, raw) => {
+    expect(normalisePhone(raw)).toBeNull();
+  });
+
+  it("still accepts a 10-digit number whose first digit is not 0, and +91 followed by a non-zero digit", () => {
+    expect(normalisePhone("9000000012")).toBe("+919000000012");
+    expect(normalisePhone("+91 90000 00012")).toBe("+919000000012");
   });
 
   it("accepts a non-Indian number with +, and keeps its country code", () => {
