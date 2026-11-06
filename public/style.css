@@ -27,9 +27,13 @@ button { padding: 0 1rem; }
 .step { min-width: 44px; padding: 0; border: 1px solid #0b57d0; border-radius: 8px; background: #fff; color: #0b57d0; font-size: 1.25rem; font-weight: 600; }
 .step:disabled { color: #767676; border-color: #bbb; }
 .step-count { min-width: 1.5rem; text-align: center; font-weight: 600; }
-/* Room under the last row so the fixed bar never covers it (bar is about 4.5 rem; message adds more). */
-body.reserving main { padding-bottom: calc(6rem + env(safe-area-inset-bottom)); }
-.basket-bar { position: fixed; left: 0; right: 0; bottom: 0; background: #fff; border-top: 1px solid #bbb; box-shadow: 0 -2px 8px rgba(0, 0, 0, .12); padding: .5rem 1rem; padding-bottom: calc(.5rem + env(safe-area-inset-bottom)); }
+/* --bar-h is the fixed bar's real height, set from script on every render (QA S-09 F1, F2; D-038 rule 8).
+   It already includes the safe-area padding. 0px when there is no bar.
+   The bar is sticky at the end of the page (not fixed): it takes its own room, so the last row is never
+   covered, even in the instant before script has measured it. */
+html { scroll-padding-bottom: var(--bar-h, 0px); }
+body.reserving main { padding-bottom: 1rem; }
+.basket-bar { position: sticky; bottom: 0; background: #fff; border-top: 1px solid #bbb; box-shadow: 0 -2px 8px rgba(0, 0, 0, .12); padding: .5rem 1rem; padding-bottom: calc(.5rem + env(safe-area-inset-bottom)); }
 .basket-bar-inner { max-width: 40rem; margin: 0 auto; }
 .basket-message { color: #8a0018; font-weight: 600; font-size: .9rem; margin-bottom: .5rem; }
 .basket-reserve { display: flex; align-items: center; justify-content: center; min-height: 48px; box-sizing: border-box; border-radius: 8px; background: #0b57d0; color: #fff; font-weight: 700; text-decoration: none; }
