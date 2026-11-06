@@ -84,10 +84,9 @@
 //       a cell note explains it on the edited State cell (6.1.7) but nothing is blanked or reverted.
 //   F2  If the grid's State on the edited row is not `newValue` (the seller sorted Claims before the trigger ran), the row
 //       is not the edited claim. The handler runs a FULL recalculation of every item under the same single lock (one
-//       waitLock, one flush, one cache removal, one release) and answers { handled: true, reverted: false }. Hint for the
-//       implementer: the result must still stamp the waiter promoted by the release, so the repair cannot use "previous
-//       role = current role" blindly. The Promoted at left on a claim that is no longer a holder is the record that it was
-//       a holder before (reserve stamps every new holder), so previous role = holder where a stamp exists.
+//       waitLock, one flush, one cache removal, one release) and answers { handled: true, reverted: false }. It behaves
+//       exactly like recalculateAll (previous role = current role): it invents NO promotion, so the waiter who moved up
+//       gets no Promoted at. That is the D-039 accepted gap (PM decision); do not infer roles from stale stamps.
 //   F3  A new State that is not a valid State: under the lock a note NOT_A_STATE is set on that State cell and NOTHING else
 //       is written (no setCell at all). Result stays { handled: false }. The lock is taken, so the write is flushed, the
 //       cache cleared and the lock released as for any write. A later accepted edit of the cell removes the note.
@@ -950,12 +949,12 @@ describe("onClaimsEdit: Claims re-sorted before the trigger ran (QA F2)", () => 
     return onClaimsEdit(h.ss, { tab: "Claims", row, column: STATE_COL, oldValue: "active", newValue: "released", ...over }, h.deps as never);
   }
 
-  it("recalculates the item that really changed and stamps the waiter who moved up", () => {
+  it("repairs the item that really changed (Status, Person) and, like recalculateAll, stamps nobody (D-039 accepted gap)", () => {
     const h = harness(build(SEED));
     const r = releaseThenSort(h);
     expect(r).toEqual({ handled: true, reverted: false });
     expect(stateOf(h.ss, 1)).toBe("released");
-    expect(stamp(h.ss, 2)).toBe(NOW);
+    expect(stamp(h.ss, 2)).toBeNull(); // D-039: a repair with no before-state invents no promotion
     expect(itemRow(h.ss, "Tech", "I-0001")).toMatchObject({ Status: "Reserved", Person: "Buyer 2" });
   });
 
