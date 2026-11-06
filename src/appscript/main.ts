@@ -12,6 +12,7 @@ import { onClaimsEdit, type ClaimsEdit } from "../api/on-edit";
 import { uuidsToBytes } from "../api/random";
 import { recalculateAll } from "../api/recalc";
 import { reserve } from "../api/reserve";
+import { waOpened } from "../api/wa-opened";
 import type { SellerDeps } from "../api/seller-sheet";
 import { warmCatalogue } from "../api/warm-catalogue";
 import { activeSpreadsheet } from "./adapter";
@@ -125,6 +126,8 @@ export function doPostRun(e?: { postData?: { contents?: string } }): GoogleAppsS
         ...sellerDeps(),
         sellerWhatsapp: props.getProperty("SELLER_WHATSAPP") ?? undefined,
       }),
+    // S-13: one cell on Bookings, under the same lock, cache and clock.
+    waOpened: (request) => waOpened(activeSpreadsheet(), request, sellerDeps()),
   });
   return ContentService.createTextOutput(body).setMimeType(ContentService.MimeType.JSON);
 }

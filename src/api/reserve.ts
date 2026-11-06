@@ -14,7 +14,7 @@ import { colOf, guardText, hex, itemNameCol } from "./migrate";
 import type { CellValue, Spreadsheet, Tab } from "./sheet";
 import { numberText, text, unapostrophe, unguard } from "./cell-text";
 import { cleanSiteUrl } from "./site-url";
-import { buildMessage, type MessageUnit } from "../domain/message";
+import { buildWhatsappUrl, type MessageUnit } from "../domain/message";
 import { normalisePhone } from "../domain/phone";
 import { recalculate, type ClaimInput, type ClaimResult, type ClaimRole, type ClaimState } from "../domain/queue";
 
@@ -232,7 +232,7 @@ const messageUnit = (u: ReserveUnit, item: ItemInfo): MessageUnit => ({
 
 function whatsappUrl(deps: ReserveDeps, name: string, units: MessageUnit[], token: string): string | null {
   const base = contactUrl(deps.sellerWhatsapp);
-  return base ? `${base}?text=${encodeURIComponent(buildMessage(name, units, deps.siteUrl, token))}` : null;
+  return base ? buildWhatsappUrl(base, name, units, deps.siteUrl, token) : null;
 }
 
 // ---- The handler

@@ -13,7 +13,7 @@ import { colOf } from "./migrate";
 import { CLAIMS, readClaims, readItems, toInput, itemInput, type ClaimRow, type ItemRow } from "./seller-sheet";
 import type { Spreadsheet } from "./sheet";
 import { cleanSiteUrl } from "./site-url";
-import { buildMessage, type MessageUnit } from "../domain/message";
+import { buildWhatsappUrl, type MessageUnit } from "../domain/message";
 import { recalculate, type ClaimResult } from "../domain/queue";
 
 export interface BookingDeps {
@@ -138,7 +138,7 @@ export function booking(ss: Spreadsheet, request: unknown, deps: BookingDeps): B
         outcome: r.role === "holder" ? "holder" : "waiting", position: r.position,
       };
     };
-    whatsappUrl = `${base}?text=${encodeURIComponent(buildMessage(found.name, [...holding, ...waitingClaims].map(unit), siteUrl, token as string))}`;
+    whatsappUrl = buildWhatsappUrl(base, found.name, [...holding, ...waitingClaims].map(unit), siteUrl, token as string);
   }
   return { ok: true, booking: view, whatsappUrl };
 }

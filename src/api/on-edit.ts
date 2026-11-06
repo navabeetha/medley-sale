@@ -7,7 +7,7 @@
 // check and previousRole must use the claims AS THEY WERE BEFORE it. Passing the after-edit state
 // would make every sale look like an oversell and revert it. The grid is authoritative for the new
 // State: it is re-read under the lock, so a second quick edit is never overwritten with a stale one.
-import { claimColumns, CLAIMS, BLANK_STATE, NOT_A_STATE, isOurStateNote, applyItem, itemInput, locked, readClaims, readItems, readTokens, repairAll, rolesOf, toInput, type SellerDeps } from "./seller-sheet";
+import { claimColumns, CLAIMS, BLANK_STATE, NOT_A_STATE, canWriteStateNote, isOurStateNote, applyItem, itemInput, locked, readClaims, readItems, readTokens, repairAll, rolesOf, toInput, type SellerDeps } from "./seller-sheet";
 import type { CellValue, Spreadsheet } from "./sheet";
 import { colOf, isBlank } from "./migrate";
 import { text } from "./cell-text";
@@ -60,7 +60,8 @@ export function onClaimsEdit(ss: Spreadsheet, edit: ClaimsEdit, deps: SellerDeps
     }
     if (blank(edit.newValue) === null) {
       // F8: an emptied cell is not a claim edit, but on a row with a Claim ID it says why the claim has gone quiet.
-      if (idNow !== null && claimsTab.getNote(edit.row, edit.column) !== BLANK_STATE) {
+      const had = claimsTab.getNote(edit.row, edit.column);
+      if (idNow !== null && had !== BLANK_STATE && canWriteStateNote(had)) {
         markWrote();
         claimsTab.setNote(edit.row, edit.column, BLANK_STATE);
       }
@@ -69,10 +70,15 @@ export function onClaimsEdit(ss: Spreadsheet, edit: ClaimsEdit, deps: SellerDeps
     // QA F3: a typo'd State (e.g. "Sold ") is not a claim state. Say so on the cell and write nothing else.
     if (!isState(edit.newValue)) {
       if (idNow === null) return { handled: false }; // a row with no Claim ID is not a claim row: no note
-      markWrote();
-      claimsTab.setNote(edit.row, edit.column, NOT_A_STATE);
+      if (canWriteStateNote(claimsTab.getNote(edit.row, edit.column))) {
+        markWrote();
+        claimsTab.setNote(edit.row, edit.column, NOT_A_STATE);
+      }
       return { handled: false };
     }
+    // Q2: a valid State change is accepted, and what the catalogue shows (waitingCount) may change with it even if we
+    // end up writing nothing, so the cache is always cleared.
+    markWrote();
 
     const sheet = readClaims(claimsTab);
     // The edited claim is the one on the edited row, read afresh under the lock; everything after that
@@ -99,9 +105,11 @@ export function onClaimsEdit(ss: Spreadsheet, edit: ClaimsEdit, deps: SellerDeps
       if (!verdict.ok) {
         markWrote();
         if (oldKnown) claimsTab.setCell(edit.row, edit.column, edit.oldValue);
-        claimsTab.setNote(edit.row, edit.column, verdict.reason);
+        // Q1: her own note stays; the sale is still put back.
+        const free = canWriteStateNote(claimsTab.getNote(edit.row, edit.column));
+        if (free) claimsTab.setNote(edit.row, edit.column, verdict.reason);
         if (oldKnown) return { handled: true, reverted: true, reason: verdict.reason };
-        note = verdict.reason;
+        if (free) note = verdict.reason;
       }
     }
     // An accepted edit removes the explanation left by an earlier refusal, typo or blank, but only OURS (F10):
