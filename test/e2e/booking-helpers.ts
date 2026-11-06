@@ -8,7 +8,8 @@ import { json, mockApi, mockPhotos, ok } from "./helpers";
 // Lowercase hex on purpose: a mixed-case 40+ char run looks like a sheet ID to tools/pii-scan.mjs.
 export const TOKEN = ["0f1e2d3c4b5a6978", "8796a5b4c3d2e1f0"].join("");
 export const OTHER_TOKEN = ["aa11bb22cc33dd44", "ee55ff6600771188"].join("");
-export const LAST_BOOKING_KEY = "medley-sale:last-booking:v1";
+export const LAST_BOOKING_KEY = "medley-sale:last-booking:v1"; // sessionStorage: the last reserve answer (skipped items)
+export const BOOKINGS_KEY = "medley-sale:bookings:v1"; // localStorage (D-005): JSON array of tokens, newest first
 export const SAVED_LINE = "Your reservation is saved, even if you don't send the message.";
 
 export type Json = Record<string, unknown>;
@@ -39,15 +40,16 @@ export interface Api {
   sent: Sent[];
   gets: string[];
   /** Replace how one action is answered. */
-  on(action: "booking" | "backOut" | "reserve", h: Post): void;
+  on(action: "booking" | "backOut" | "reserve" | "waOpened", h: Post): void;
   setCatalogue(c: unknown): void;
 }
 
-export async function setupApi(page: Page, handlers: Partial<Record<"booking" | "backOut" | "reserve", Post>> = {}, catalogue: unknown = { ...response(ITEMS), reserving: true }): Promise<Api> {
+export async function setupApi(page: Page, handlers: Partial<Record<"booking" | "backOut" | "reserve" | "waOpened", Post>> = {}, catalogue: unknown = { ...response(ITEMS), reserving: true }): Promise<Api> {
   const h: Record<string, Post> = {
     booking: (r) => json(bookingReply())(r),
     backOut: (r) => json(backOutReply(FULL_VIEW))(r),
     reserve: (r) => json({ ok: true, token: TOKEN, bookingId: 7, units: [], skipped: [], whatsappUrl: null })(r),
+    waOpened: (r) => json({ ok: true })(r),
     ...handlers,
   };
   const api: Api = {

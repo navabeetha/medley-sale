@@ -17,13 +17,21 @@
 //   booking-saved     the 6.4 line "Your reservation is saved, even if you don't send the message." when found.
 //   booking-skipped   list of booking-skipped-item (name + "sold out" / "no longer available"), from the stored
 //                     reserve answer in sessionStorage "medley-sale:last-booking:v1", ONLY when its token is this page's.
-//   my-reservations   <a href="#/b/<token>"> in the header on every screen while the stored last booking has a token.
+//   Saved list  localStorage "medley-sale:bookings:v1" (D-005): a JSON array of tokens ONLY (no names, no numbers),
+//             newest first, written when a booking succeeds (a token already in the list moves to the front, once).
+//   my-reservations   <a href="#/b/<newest token>"> in the header on the catalogue and booking screens while the list
+//             has at least one valid token (a non-empty string). Works in a new tab (it is localStorage).
+//             With 2 or more tokens, "my-reservations-item" links (<a href="#/b/<token>">), one per token,
+//             newest first, are also shown. Corrupt or blocked storage: no link, no crash; junk entries are skipped.
+//   booking-whatsapp  <a> to the reply's whatsappUrl (only when it starts "https://wa.me/"), target _blank, rel noopener.
+//             Tapping it POSTs {action:"waOpened", token} (text/plain, body only, no query string) at most once per
+//             page view, without waiting for the answer and ignoring its failure: the link still opens.
 //   All data via textContent.
 import { test, expect, type Page } from "@playwright/test";
 import { ITEMS } from "../fixtures/catalogue-fixture";
 import { json, hang, networkDown } from "./helpers";
 import {
-  FULL_VIEW, LAST_BOOKING_KEY, OTHER_TOKEN, SAVED_LINE, TOKEN, blockStorage, bookingReply, line, setupApi,
+  BOOKINGS_KEY, FULL_VIEW, LAST_BOOKING_KEY, OTHER_TOKEN, SAVED_LINE, TOKEN, blockStorage, bookingReply, line, setupApi,
 } from "./booking-helpers";
 
 const t = (p: Page, id: string) => p.getByTestId(id);
@@ -231,22 +239,57 @@ test.describe("F3 and the saved link", () => {
     expect(await hash(page)).toBe(`#/b/${TOKEN}`);
   });
 
-  test("My reservations survives a reload (it reads the saved booking)", async ({ page }) => {
+  test("My reservations survives a closed tab: a brand-new tab on the same device still has it (localStorage)", async ({ page }) => {
     await setupApi(page);
     await book(page);
     await expect.poll(() => hash(page)).toBe(`#/b/${TOKEN}`);
-    await page.goto("/");
-    await expect(t(page, "my-reservations")).toHaveAttribute("href", `#/b/${TOKEN}`);
+    const stored = await page.evaluate((k) => localStorage.getItem(k), BOOKINGS_KEY);
+    expect(JSON.parse(stored ?? "null")).toEqual([TOKEN]); // tokens only
+    expect(stored).not.toMatch(/Asha|9000/); // no name, no number
+    const tab = await page.context().newPage();
+    await tab.goto("/");
+    await expect(t(tab, "my-reservations")).toHaveAttribute("href", `#/b/${TOKEN}`);
   });
 
-  test("a corrupt or tokenless saved booking gives no link and no crash", async ({ page }) => {
+  test("the list is newest first: the link goes to the newest booking and every booking is listed", async ({ page }) => {
     await setupApi(page);
-    for (const junk of ["not json", JSON.stringify({ ok: true }), JSON.stringify({ token: 5 }), "null"]) {
-      await page.addInitScript((v) => sessionStorage.setItem("medley-sale:last-booking:v1", v), junk);
+    await page.addInitScript(([k, v]) => { if (!localStorage.getItem(k!)) localStorage.setItem(k!, v!); }, [BOOKINGS_KEY, JSON.stringify([OTHER_TOKEN, TOKEN])]);
+    await page.goto("/");
+    await expect(t(page, "my-reservations")).toHaveAttribute("href", `#/b/${OTHER_TOKEN}`);
+    const items = t(page, "my-reservations-item");
+    await expect(items).toHaveCount(2);
+    await expect(items.nth(0)).toHaveAttribute("href", `#/b/${OTHER_TOKEN}`);
+    await expect(items.nth(1)).toHaveAttribute("href", `#/b/${TOKEN}`);
+  });
+
+  test("a new booking goes to the front of the list, and the same token is never listed twice", async ({ page }) => {
+    await setupApi(page);
+    await page.addInitScript(([k, v]) => { if (!localStorage.getItem(k!)) localStorage.setItem(k!, v!); }, [BOOKINGS_KEY, JSON.stringify([OTHER_TOKEN, TOKEN])]);
+    await book(page); // the mocked reserve answers TOKEN again
+    await expect.poll(() => hash(page)).toBe(`#/b/${TOKEN}`);
+    const stored = await page.evaluate((k) => localStorage.getItem(k), BOOKINGS_KEY);
+    expect(JSON.parse(stored ?? "null")).toEqual([TOKEN, OTHER_TOKEN]);
+  });
+
+  test("junk in the saved list is skipped; with nothing valid there is no link and no crash", async ({ page }) => {
+    await setupApi(page);
+    for (const junk of ["not json", "{}", "null", "[5]", '[""]', "[null,{}]"]) {
+      await page.addInitScript((v) => localStorage.setItem("medley-sale:bookings:v1", v), junk);
       await page.goto("/");
       await expect(t(page, "item-row")).toHaveCount(ITEMS.length);
       await expect(t(page, "my-reservations")).toHaveCount(0);
     }
+    await page.addInitScript((v) => localStorage.setItem("medley-sale:bookings:v1", v), JSON.stringify([5, TOKEN, ""]));
+    await page.goto("/");
+    await expect(t(page, "my-reservations")).toHaveAttribute("href", `#/b/${TOKEN}`);
+  });
+
+  test("a saved last-booking in sessionStorage alone (the old place) does not make a link", async ({ page }) => {
+    await setupApi(page);
+    await page.addInitScript(([k, v]) => sessionStorage.setItem(k!, v!), [LAST_BOOKING_KEY, JSON.stringify({ ok: true, token: TOKEN })]);
+    await page.goto("/");
+    await expect(t(page, "item-row")).toHaveCount(ITEMS.length);
+    await expect(t(page, "my-reservations")).toHaveCount(0);
   });
 
   test("T-14: with storage blocked a booking still lands on a working booking page", async ({ page }) => {
@@ -256,5 +299,68 @@ test.describe("F3 and the saved link", () => {
     await expect.poll(() => hash(page)).toBe(`#/b/${TOKEN}`);
     await expect(t(page, "booking-group-reserved")).toBeVisible();
     await expect(t(page, "booking-saved")).toHaveText(SAVED_LINE);
+  });
+});
+
+test.describe("waOpened when the WhatsApp link is tapped", () => {
+  const WA = "https://wa.me/919000000001?text=x";
+  const opened = (api: { sent: { body: Record<string, unknown> }[] }) => api.sent.filter((s) => s.body.action === "waOpened");
+
+  async function load(page: Page, waOpened?: Parameters<typeof setupApi>[1]) {
+    // Never reach the real wa.me: anything the link opens is answered locally.
+    await page.context().route(/^https:\/\/wa\.me\//, (r) => r.fulfill({ status: 200, contentType: "text/html", body: "<p>x</p>" }));
+    const api = await setupApi(page, waOpened);
+    await page.goto(`/#/b/${TOKEN}`);
+    await expect(t(page, "booking-group-reserved")).toBeVisible();
+    return api;
+  }
+
+  test("the link goes to the reply's whatsappUrl in a new tab; nothing is posted before a tap", async ({ page }) => {
+    const api = await load(page);
+    const a = t(page, "booking-whatsapp");
+    await expect(a).toHaveAttribute("href", WA);
+    await expect(a).toHaveAttribute("target", "_blank");
+    await expect(a).toHaveAttribute("rel", /noopener/);
+    expect(opened(api)).toHaveLength(0);
+  });
+
+  test("a tap POSTs exactly {action, token} in the body, once however many taps", async ({ page }) => {
+    const api = await load(page);
+    await t(page, "booking-whatsapp").click();
+    await t(page, "booking-whatsapp").click();
+    await expect.poll(() => opened(api).length).toBe(1);
+    await page.waitForTimeout(300);
+    expect(opened(api)).toHaveLength(1);
+    const sent = api.sent.find((s) => s.body.action === "waOpened")!;
+    expect(Object.keys(sent.body).sort()).toEqual(["action", "token"]);
+    expect(sent.body.token).toBe(TOKEN);
+    expect(sent.contentType).toMatch(/^text\/plain/);
+    expect(new URL(sent.url).search).toBe("");
+    expect(sent.url).not.toContain(TOKEN);
+  });
+
+  test("the link still opens while the POST is unanswered", async ({ page }) => {
+    await load(page, { waOpened: hang });
+    const [tab] = await Promise.all([page.context().waitForEvent("page", { timeout: 3000 }), t(page, "booking-whatsapp").click()]);
+    expect(tab.url()).toMatch(/^https:\/\/wa\.me\/|^about:blank$/);
+  });
+
+  test("a failed POST is ignored: the link opens and no alert appears", async ({ page }) => {
+    await load(page, { waOpened: networkDown });
+    const [tab] = await Promise.all([page.context().waitForEvent("page", { timeout: 3000 }), t(page, "booking-whatsapp").click()]);
+    expect(tab).toBeTruthy();
+    await page.waitForTimeout(300);
+    await expect(page.getByRole("alert")).toHaveCount(0);
+  });
+
+  test("no WhatsApp link when the reply has no whatsappUrl or a non-wa.me one", async ({ page }) => {
+    for (const url of [null, "javascript:alert(1)", "https://example.com/?text=x"]) {
+      const p = await page.context().newPage();
+      await setupApi(p, { booking: (r) => json(bookingReply(FULL_VIEW, url))(r) });
+      await p.goto(`/#/b/${TOKEN}`);
+      await expect(t(p, "booking-group-reserved")).toBeVisible();
+      await expect(t(p, "booking-whatsapp")).toHaveCount(0);
+      await p.close();
+    }
   });
 });
