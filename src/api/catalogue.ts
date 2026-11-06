@@ -82,7 +82,25 @@ function dateOrText(v: CellValue | undefined, formatDate: (d: Date) => string): 
 function safeLink(url: string | undefined): string | null {
   // The adapter joins several link runs in one cell with a space; use the first.
   const first = url?.trim().split(/\s+/)[0];
-  return first && /^https?:\/\//i.test(first) ? first : null;
+  return first && /^https?:\/\//i.test(first) ? stripTracking(first) : null;
+}
+
+// D-037: ad/click tracking the seller picked up while shopping (e.g. Amazon's hvlocphy,
+// a rough location code) shouldn't be republished. Amazon product pages live in the path
+// (/dp/<ASIN>), so their whole query goes; elsewhere only known tracker names go, so a
+// functional parameter (a product or region id) still works. Plain string parsing on
+// purpose: the Apps Script runtime has no URL class.
+const AMAZON_HOST = /(^|\.)amazon\.[a-z.]+$/i;
+const TRACKER = /^(utm_\w+|gclid|gbraid|wbraid|dclid|gad_\w+|fbclid|msclkid|mc_cid|mc_eid|igshid|_ga|_gl|yclid|ttclid)$/i;
+
+function stripTracking(link: string): string {
+  const m = /^(https?:\/\/([^/?#]*)[^?#]*)(?:\?([^#]*))?(#.*)?$/i.exec(link);
+  if (!m || m[3] === undefined) return link; // no query: nothing to strip
+  const [, base, host, query, hash = ""] = m;
+  const kept = AMAZON_HOST.test(host!.replace(/:\d+$/, ""))
+    ? []
+    : query!.split("&").filter((p) => p !== "" && !TRACKER.test(p.split("=")[0]!));
+  return base + (kept.length ? `?${kept.join("&")}` : "") + hash;
 }
 
 /** Claims by header name (brief 4.1). Only Claim ID, Item ID and State are read. */

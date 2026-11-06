@@ -18,6 +18,10 @@
 - A 15-unit booking with long titles stays under the URL limit and keeps the private link.
 - Tests assert the URL. No agent sends a real message.
 
+## Seller notes (added after R1)
+
+- **2026-11-06, from the R1 phone check:** the reserve message must say *which* item, not just its name. "Air purifier" alone was ambiguous because there are several. Include the **brand** after the name when the item has one (e.g. "Air purifier (Philips)"), keeping Books as book name then author (4.1). Apply the same rule to R1's per-card "Message to reserve" text ("Hi! I'd like to reserve: <name>") when this message work happens, so the two never disagree.
+
 ## References
 
 - Message 2.8 (no seller name. Book name first, then author, 4.1). URL limit 6.3 (under 2,000 characters, "…and N more"). API `waOpened` 4.3.
