@@ -1773,3 +1773,56 @@ Scope: the installable on-edit handler (`onClaimsEdit`), the 10-minute repair (`
 - The S-12 booking page (not built yet).
 
 **Screenshot:** `docs/qa/screenshots/S-10-form-390.png` (iPhone 14 profile, synthetic data, the "add a +" number error showing).
+
+## 2026-11-06: S-13 WhatsApp handoff plus Q1, Q2, Q4 (branch S-13-whatsapp; red 17b25d7..41948cb, green 3c7dbbc), QA
+
+**Verdict: NOT YET.** The gate is green and most of the work is solid. One Q1 path hides an oversell with no signal at all, and the URL-cap boundary that the acceptance criterion depends on is not pinned by any test.
+
+### What changed
+- `src/domain/message.ts`: `buildWhatsappUrl` caps the URL under 2,000 characters, measured after encoding. It drops bullets from the end, adds "…and N more", and always keeps the link line last. `flatten()` turns whitespace runs in the buyer name, item name and brand into single spaces.
+- `src/api/wa-opened.ts` (new) is wired in `handle-post.ts`, where `PostDeps.waOpened` is optional, and in `appscript/main.ts`.
+- Q1: `canWriteStateNote` guards every State-note write (blank, typo, oversell refusal) on the edit path (`on-edit.ts`) and the timed path (`syncStateNotes`).
+- Q2: `markWrote()` runs on every valid State edit. Q4: the refusal wording moved to `queue.ts` as `isRefusalReason`.
+
+### Gate (run fresh; Playwright not run on purpose, because another worktree owns port 4173)
+- `tsc --noEmit` passes, and so does `tsc -p tsconfig.appscript.json`. `eslint .` is clean.
+- Vitest: 49 files, 1404 tests passed. The line "Automatic merge went well" in the output comes from the existing pii-scan-merge test's temporary repo, not from this repo.
+- `npm run -s size`: 8.9 KB gzipped of 50 KB. `node tools/pii-scan.mjs`: 248 files, 0 findings.
+- Shipped code in `src/api`, `src/domain` and `src/appscript` uses none of URL, URLSearchParams, TextEncoder, crypto or structuredClone. The cap only uses `encodeURIComponent` and `.length`.
+
+### Findings (worst first)
+**F1, S3: Q1 hides an oversell with no signal at all when the edit event has no oldValue (a paste) and the State cell carries the seller's own note.** With no oldValue nothing can be put back. Before this change, the refusal note was the only sign of the oversell; now it is suppressed (`on-edit.ts`, `if (free) note = verdict.reason`). The timed recalc does not flag it either. Repro (fake sheet): item qty 1, claim 1 sold, her note on claim 2's State cell, then `edit(2,"sold",{oldValue:undefined})`. The result is `{handled:true, reverted:false}`, both claims sold, and only her note on the cell. Without her note, the control case writes "All 1 unit is already sold…". Two buyers can then be told they bought the same unit. PM decision needed: for example, add the reason to her note instead of replacing it, keeping her text. A related S4: on the normal path (oldValue known) her note stays and the sale is put back with no explanation. That is correct but confusing, and no sale is lost.
+
+**F2, S3 (existing before this story; S-13 owns the encoding AC): a buyer name with a lone surrogate saves the reservation and then throws.** `encodeURIComponent` throws URIError. Repro: `reserve` with name `"As\ud800ha"` adds the Claims row (1 row before, 2 after) and then throws, so `handlePost` answers "unavailable". The buyer never gets a token. A retry with the same key, and `booking()` for that token, go through the same encoder. `buildSellerMessage` (`seller-sheet.ts:251`) has the same problem. A normal keyboard can't produce this, but a damaged paste or a crafted client can. Fix in `flatten()`: replace unpaired surrogates using a regex, not `toWellFormed`, which may not exist in Apps Script V8.
+
+**F3, S4: when even the first bullet is too long (keep = 0), the greeting "Hi! I'm <name>." is dropped as well.** The "no heading without a bullet" loop pops every non-bullet line. Repro: `buildWhatsappUrl(base,"Asha",[unit with name "पौधा ".repeat(50)],…)` gives `"…and 1 more\n\nChange or back out: …"`, so the seller does not learn who is writing. It needs one title of about 1,850 or more encoded characters (around 200 Devanagari characters). The loop should stop at the greeting.
+
+**F4, S4: an item name of only whitespace gives the bullet "• , ₹1,200".** This is the seller's own data and it happened before this change too. Noted only.
+
+### Implementer flags
+- (a) An optional `waOpened` is not acceptable as it stands. Nothing tests the wiring in `main.ts`, so deleting it would leave tsc and vitest green and the action would quietly answer "unknown action". The reason it is optional is `test/unit/handle-post.test.ts:46`, which still lists "waOpened" as an unknown action. That row is out of date now that S-13 is in. Recommendation: the PM or test author updates that helper and table row, and the field becomes required.
+- (b) Flushing and clearing the cache on every valid State edit, no-ops included, is acceptable. The seller makes few edits, and the cost is one flush and one cold catalogue read. A side note: `waOpened` also clears the catalogue cache through `locked()`, although a Bookings stamp can't change the catalogue, so every handoff costs one cold catalogue rebuild (S4, performance only).
+
+### Privacy (waOpened), checked by reading the code and running the tests
+- Unknown, empty, missing, non-string and non-object tokens all give the same `{ok:false,error:"not-found"}`. `busy` and `not-reserving` don't depend on the token, so they reveal nothing about it. Non-string or empty input returns before the lock (pinned by a test). A string that is not a token does take the lock, which matches the spec.
+- The response carries no name, number or row. It writes only the matching row's cell, found by an exact match on the unapostrophed token.
+
+### Mutation probes (applied by hand, full vitest each time, source restored afterwards)
+Survived, so these are coverage gaps:
+- `url.length < URL_LIMIT` changed to `<=`, and `URL_LIMIT = 2001`: both survive. The "exact edge" test grows three titles at once, so its length steps over 2,000 and never lands on it. The AC "under the URL limit" is not pinned at 1,999/2,000. Fix: pad one title a character at a time until the URL is exactly 2,000 long.
+- `if (free) note = …` changed to always write: survives (the no-oldValue oversell path in F1 is untested).
+- The waOpened row match changed to "the first row with any token": survives, because the test only stamps booking 1, which is the first row. It should stamp booking 2 and check that booking 1 is untouched.
+- Removing the heading-pop loop in `compose`: survives (no test of a heading with no bullets left).
+- Equivalent, so no action needed: removing the redundant `findBooking` call in waOpened; removing `note === ""` from `canWriteStateNote` (the adapter already turns "" into null); the blank note being rewritten with the same text.
+Killed: Q2 markWrote removed, timed Q1 guard removed, oldKnown oversell guard removed, waOpened pre-lock type check, waOpened flush, repeat overwrite, flatten in title/buyer/seller message, "…and N more" off by one, refusal regex narrowed or one pattern dropped, waOpened routing.
+
+### Manual checks still needed
+- At G1 on the seller's phone, iOS and Android: open a capped 15-unit URL from staging. WhatsApp should show the "…and N more" line, the ₹ sign, emoji and line breaks intact, and a tappable private link.
+- Live on staging: after the handoff, the Bookings row's "WhatsApp opened" cell gets a timestamp once, and a second handoff leaves it as it is.
+- Live: paste "sold" into a State cell that has a seller note (no oldValue) and see what the seller is shown (F1).
+
+### Not examined
+- Playwright and anything in `src/site/` (the site does not call `waOpened` yet; "returning doesn't reopen WhatsApp" is a site AC outside this diff).
+- Whether wa.me accepts a URL of up to 1,999 characters (research note 12 is not confirmed).
+- `\s` in flatten doesn't cover U+0085 (NEL): whether WhatsApp treats it as a line break was not checked.
+- The S-13 brand tests and Q4 pins were read only at the mutation level, not line by line.
