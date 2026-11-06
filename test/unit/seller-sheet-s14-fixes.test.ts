@@ -231,9 +231,10 @@ describe("a typo'd State on a row with no Claim ID gets no note (S-15 QA re-chec
     expect(claimsTab(h.ss).getNote(row, STATE_COL)).toBeNull();
   });
 
-  it("onClaimsEdit ignores it: nothing is written and no lock is taken (a row without a Claim ID is not ours)", () => {
+  it("onClaimsEdit ignores it: nothing is written (a row without a Claim ID is not ours; checked under the lock, F9)", () => {
     const h = harness(build([{ id: 1, item: "I-0001" }]));
     const row = addRowWithoutId(h.ss, "Sold ");
+    h.events.length = 0; // the setup's own appendRow is not the handler's write
     const r = onClaimsEdit(h.ss, { tab: "Claims", row, column: STATE_COL, oldValue: "active", newValue: "Sold " }, h.deps as never);
     expect(r).toMatchObject({ handled: false });
     expect(claimsTab(h.ss).getNote(row, STATE_COL)).toBeNull();
