@@ -1147,7 +1147,7 @@ describe("Message link: a Number cell that holds a number (QA F4)", () => {
   });
 
   it("does not guess at other numbers: a 12-digit number that does not start with 91, or an 11-digit one that does, gets no link", () => {
-    for (const bad of [Number(["44", "90000", "000", "12"].join("")), Number(["91", "90000", "00012"].join(""))]) {
+    for (const bad of [Number(["44", "90000", "000", "12"].join("")), Number(["91", "90000", "0012"].join(""))]) {
       const h = harness(build([{ id: 1, item: "I-0001", number: bad }]));
       h.recalc();
       expect(blank(claimRow(h.ss, 1)["Message link"]), String(bad)).toBe(true);
