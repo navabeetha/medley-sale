@@ -1826,3 +1826,39 @@ Killed: Q2 markWrote removed, timed Q1 guard removed, oldKnown oversell guard re
 - Whether wa.me accepts a URL of up to 1,999 characters (research note 12 is not confirmed).
 - `\s` in flatten doesn't cover U+0085 (NEL): whether WhatsApp treats it as a line break was not checked.
 - The S-13 brand tests and Q4 pins were read only at the mutation level, not line by line.
+
+## 2026-11-06: S-13 re-check of the NOT YET findings (red 8265b7d..aa37be8, fix 244a0bd, PM test fix e510e92), QA
+
+**Verdict: SIGN-OFF, on one test-only condition (C1 below).** This was a scoped re-check of the touched code only, not a fresh exploratory pass.
+
+### Gate (run fresh, no Playwright)
+- Both tsc configs and eslint pass.
+- vitest: 54 files, 1447 tests passed.
+- size: 8.9 KB of 50 KB. pii-scan: 253 files, 0 findings.
+
+### Earlier findings
+- **F1 (hidden oversell): closed.** Her note is kept and `\n\n— <reason>` is appended; a repeat appends nothing; an accepted edit removes only our suffix and leaves her text exactly as it was. The no-oldValue path now always writes a visible signal.
+- **F2 (lone surrogates): closed.** `flatten()` turns lone surrogates into U+FFFD. It covers the buyer greeting, titles and `buildSellerMessage`.
+- **F3 (greeting dropped): closed.** `compose` keeps the first line.
+- **F4 (blank item name): closed.** It shows as "Item", or "Item (Brand)".
+- **(a):** `waOpened` is now required.
+- **Cache:** `waOpened` passes `clearCache=false` to `locked()`, and every other caller still clears by default (the M28 mutant dies).
+
+### Lookbehind in Apps Script V8
+- The GAS build target is es2019, and lookbehind arrived in ES2018. esbuild therefore leaves the regex literal as it is: checked in `dist/appscript/Code.js` line 746, which is a build output and not tracked.
+- In Node, the bundled regex turns lone high and low surrogates into U+FFFD and leaves a real emoji pair intact.
+- The Apps Script V8 runtime has supported lookbehind for years. That last point is reasoned, not run on Apps Script, so the staging check should include one reserve with an emoji in the name.
+
+### Mutants
+- Now killed: `<=` at the limit, `URL_LIMIT` 2001 and 1999, heading loop removed, greeting popped, waOpened matching any row, no-oldValue path dropping the signal, overwriting her note, a repeat appending twice, her text trimmed, either surrogate branch removed, blank name dropping the brand, waOpened clearing the cache.
+- Survive:
+  - **M22:** strip any `\n\n— ` suffix, not only a refusal reason.
+  - **M23:** cut at the first `\n\n— ` instead of the last.
+  - Both would delete part of her own text if her note contains "\n\n— ". The current code is correct, but nothing pins it.
+
+### New findings
+- **C1 (condition, test-only):** add a pin. Her note containing `\n\n— ` with her own text after it survives an accepted edit unchanged. Also: her note plus `\n\n— ` plus our reason, after an accepted edit, leaves exactly her note including the inner `\n\n— `.
+- **S4: two different refusals before an accepted edit stack two suffixes**, and each accepted edit removes only the last one. Repro (fake sheet): her note "Hers", plus suffix A ("All 1 unit is already sold…"), then refused again from "released", which adds suffix B. Result: "Hers\n\n— A\n\n— B". One accepted edit leaves "Hers\n\n— A". It needs two refusals with different wording and no accepted edit in between, so it is rare and the note clears on the next accepted edit. A loop in the strip would fix it.
+
+### Not examined
+- Anything outside the touched lines, Playwright, src/site.

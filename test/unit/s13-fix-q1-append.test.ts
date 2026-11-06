@@ -82,3 +82,28 @@ describe("Q1 append: clearing our reason later removes only our suffix", () => {
     expect(noteOf(h.ss, 2)).toBe(odd);
   });
 });
+
+// QA re-check C1 (PM pin, test-only): her own note may itself contain "\n\n— ". Only a trailing suffix that is one of
+// our refusal reasons may be removed, cut at the LAST separator, so none of her text is ever lost.
+describe("Q1 append: her note containing our separator", () => {
+  const INNER = "Hers: ask first\n\n— then hold till Friday"; // synthetic; has the separator but no refusal reason
+  const seed = () => {
+    const h = harness(build(SEED));
+    claimsTab(h.ss).setNote(rowOfClaim(h.ss, 2), STATE_COL, INNER);
+    return h;
+  };
+
+  it("refused, then accepted: exactly her note is left", () => {
+    const h = seed();
+    h.edit(2, "sold");
+    expect(noteOf(h.ss, 2)).toBe(`${INNER}\n\n— ${reasonOf()}`);
+    h.edit(2, "released");
+    expect(noteOf(h.ss, 2)).toBe(INNER);
+  });
+
+  it("an accepted edit with no refusal before it leaves her note untouched", () => {
+    const h = seed();
+    h.edit(2, "released");
+    expect(noteOf(h.ss, 2)).toBe(INNER);
+  });
+});
