@@ -51,8 +51,19 @@ export class FakeTab implements Tab {
     this.notes = this.notes.filter((n) => !(n.row === row && n.col === col));
     if (text !== "") this.notes.push({ row, col, text });
   }
+  /** How many times getNote / getNotes were called (S-14 F7: the lock must not pay one read per row). */
+  noteReads = { single: 0, batch: 0 };
   getNote(row: number, col: number): string | null {
+    this.noteReads.single++;
     return this.notes.find((n) => n.row === row && n.col === col)?.text ?? null;
+  }
+  /**
+   * S-14 F7: ONE batch read of a column's notes, like Range.getNotes() in Apps Script. Index 0 is row 1,
+   * so the array has one entry per grid row (header included); null where a cell has no note.
+   */
+  getNotes(col: number): (string | null)[] {
+    this.noteReads.batch++;
+    return this.grid.map((_, i) => this.notes.find((n) => n.row === i + 1 && n.col === col)?.text ?? null);
   }
   getComments() {
     return this.comments.map((c) => ({ ...c }));
