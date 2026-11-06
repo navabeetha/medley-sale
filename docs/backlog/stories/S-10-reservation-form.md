@@ -23,6 +23,12 @@
 - Copy 6.4: "Your number is only seen by the seller and is used only for this sale." D-014 (name and number only). UX 7 errors (a failed form keeps what was typed). Route `#/reserve`.
 - Critical scenarios: **T-15** (input kept on API failure, with S-11), **T-10** (inert text in the site).
 
+## Bugfix tickets carried from S-09 QA re-check (PM, 2026-11-06); do these first
+
+- **B1 (S4):** on a short page the sticky basket bar floats mid-screen. In reserving mode make body a full-height column (`min-height: 100dvh`) and push the bar down with `margin-top: auto`. Add a short-list e2e test (2 items, 390x700: the bar's bottom equals the viewport bottom).
+- **B2 (S4):** merging hidden (cache-pruned) entries back after the live render can push the basket past 15. Add each hidden entry only while the total stays at or under 15; show the limit message for any that don't fit.
+- **B3 (S4):** a cached list with fewer free units makes the stored count shrink permanently once the user changes anything. Keep the buyer's chosen count until a live render lowers it.
+
 ## Notes from S-11 (PM, 2026-11-06)
 
 - Request fields (pinned by S-11): `{ action: "reserve", name, number, idempotencyKey, items: [{id, quantity}], website }` sent as a `text/plain` JSON POST body. `website` is the honeypot.
