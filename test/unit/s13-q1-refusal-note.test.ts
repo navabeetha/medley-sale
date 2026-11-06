@@ -16,11 +16,12 @@ describe("Q1: an oversell refusal leaves the seller's own note alone", () => {
     expect(stateOf(h.ss, 2)).toBe("active");
   });
 
-  it("keeps her note instead of replacing it with the refusal reason", () => {
+  // Superseded by the QA fix (PM, 2026-11-06): her note is kept and our reason is appended, never replacing it.
+  it("keeps her note and appends the refusal reason after it", () => {
     const h = harness(build(SEED));
     claimsTab(h.ss).setNote(rowOfClaim(h.ss, 2), STATE_COL, SELLER_NOTE);
     h.edit(2, "sold");
-    expect(noteOf(h.ss, 2)).toBe(SELLER_NOTE);
+    expect(noteOf(h.ss, 2)).toMatch(new RegExp("^" + SELLER_NOTE.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\n\n— .*already sold"));
   });
 
   it("control: with no note on the cell the refusal reason is written", () => {
