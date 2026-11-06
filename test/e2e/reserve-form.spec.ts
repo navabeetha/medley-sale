@@ -84,7 +84,9 @@ async function setup(page: Page, post: PostHandler = reply(SUCCESS), catalogue: 
       let body: Record<string, unknown> = {};
       try { body = JSON.parse(raw) as Record<string, unknown>; } catch { /* left empty: the test will say so */ }
       const sent = { url: req.url(), method: "POST", contentType: req.headers()["content-type"] ?? "", raw, body };
-      api.sent.push(sent);
+      // PM test fix (S-12): after a successful reserve the site now lands on #/b/<token> and POSTs `booking` (F3). This
+      // spec is about the reserve request, so the follow-up POSTs (booking, waOpened, backOut) are answered but not counted in `sent`.
+      if (!["booking", "waOpened", "backOut"].includes(String(body.action))) api.sent.push(sent);
       return post(route, sent);
     }
     if (req.method() !== "GET") {
