@@ -31,6 +31,13 @@
 - 8 criteria: at the limit. The last one is `manual:` (The seller at G1).
 - The trigger behaviour from the phone app is unconfirmed (research note 12).
 
+## Bugfix tickets carried from S-11 QA re-check (PM, 2026-11-06); do these first
+
+- **R1 (S3):** a booking counts as orphaned only when NO row in the raw Claims grid carries its Booking ID, whatever its State. Today a typo'd State (e.g. `Sold `) makes a same-key retry re-create the claims (double-booking).
+- **R2 (S4):** `releaseLock` in its own outer `finally`, so a throwing `flush()` still releases the lock.
+- **R3 (S4):** trim `SITE_URL` before checking it, so a pasted trailing space or newline doesn't switch reserving off.
+- Coverage: a `SITE_URL` with userinfo must give `not-configured` (surviving mutant).
+
 ## the seller needs to do
 
 At G1, change a `State` dropdown in the Sheets phone app and confirm the site and `Sold` tab update (see runbook G1).
