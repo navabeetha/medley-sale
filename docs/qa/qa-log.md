@@ -1405,3 +1405,44 @@ Both forms would only carry the seller's own tracking, which is what D-037 remov
 
 ### Verdict
 **NOT YET.** F1 (lost reservation reported as success after a mid-write failure) should get a failing test and a fix first. F2 (flush before release) is cheap and belongs in the same change, before T-18. F3 and F4 are S3s for the PM to schedule before G1. Everything else is S4 or a coverage gap.
+
+**Re-check, 2026-11-06 (commits 317d769 red, c546372 fix, 720bf67 PM test correction):**
+- **Gate (fresh, Playwright not run, same reason):** typecheck ok, eslint ok, Vitest 35 files / 1010 tests passed, size 3.4 KB of 50 KB, pii-scan 212 files / 0 findings, `build:gas` built.
+- **720bf67 is legitimate.** At c546372 on its own, exactly one test failed: an older assertion that still expected the Token without the F9 apostrophe. That contradicted the F9 tests in the red commit. The correction makes the test stricter and matches the spec; it does not loosen anything.
+- **F1 fixed.** Repro: the batched claims write throws, then the retry with the same key gives 3 units under the original booking id and token. That leaves 1 Bookings row and 3 Claims rows.
+- **F2 fixed.** The order is lock, write, flush, cache, release.
+- **F3 fixed.** Empty, `http://`, uppercase scheme, userinfo and bare `https://` all give `not-configured`.
+- **F4 fixed.** Another number gives `invalid-request`, the same number in another format replays, and a short key gives `invalid-request`.
+- **F6 fixed.** A throwing `releaseLock` still returns `ok:true`.
+- **F7 fixed.** Ten digits starting 0, `+91` then 0, and `+91 (0)…` are refused. A valid 10-digit number and `+44…` are still accepted.
+- **F9 fixed.** Token, key and Number are stored with a leading apostrophe.
+- **Honeypot:** `0`, `false`, null, `""`, `[]` and `{}` do not trip it. `true`, `1` and `" "` do.
+- **Mutation check:**
+  - 20 of 21 new-guard mutants went red: orphan completion (4 variants), the number match on replay, the key regex (min, max, charset), flush removed, release moved before flush, release unguarded, siteUrl check removed or allowing http, honeypot strings only, token and key unguarded, the sameText strip, replay token, phone trunk 0 (2 variants).
+  - All 4 of the first review's surviving mutants are now red: name newline flattening, replay skipping ended claims, claim id from the whole column, and the Item guard.
+  - The only survivor: allowing userinfo in `SITE_URL` (an S4 gap).
+
+**New findings:**
+- **R1, S3: re-completing an "orphan" can double-book.** The orphan test only looks at Claims rows that `readClaims` accepts. A row whose State isn't exactly `active`, `released` or `sold` doesn't count as a reference.
+  - Repro (fake): reserve 3 units, then set the 3 rows' State to `Sold ` (a seller typo). A retry with the same key and number creates 3 more claims for the same booking, 6 rows in all.
+  - It needs a same-key retry after a seller edit, so it is unlikely while S-10 drops the key after success, but the consequence is duplicate holds.
+  - Fix: treat a booking as orphaned only when no row in the raw Claims grid has that Booking ID, whatever its State. Failing test first.
+- **R2, S4: if `flush()` throws, the lock is not released.** The exception escapes the inner `try/finally` inside the outer `finally`, so `releaseLock` is skipped. Repro events: lock, flush throws, cache, no release.
+  - In practice Apps Script releases the lock when the execution ends, which happens straight away, so the cost is small. The PM brief's "propagates after release" does not hold.
+  - Fix: move `releaseLock` into its own outer `finally`, and add a test.
+- **R3, S4: `SITE_URL` isn't trimmed.** A trailing space or newline pasted into Script Properties gives `not-configured`, and reserving stops. That fails closed and shows on the first staging test. Fix: trim before testing, or say so in the runbook.
+- **R4, S4: notes on the implementer's other choices.**
+  - The check order honeypot, then siteUrl, then parsing is fine. A bot still learns nothing, and `not-configured` only reveals that setup is unfinished.
+  - `unapostrophe` on key, token and Number is unambiguous: the key regex forbids `'`, tokens are hex and Number is E.164.
+  - A `flush` that throws propagates as `unavailable`, and the idempotent retry then recovers. That is correct, because a failed flush means we don't know whether the write landed.
+
+**Live checks still needed (staging):**
+- T-18 (10 parallel reserves, 1 holder, 9 waiting, nothing lost or duplicated, no `busy`, slowest time recorded).
+- The first live POST succeeds with only `spreadsheets.currentonly` (LockService scope; I believe none is needed, unconfirmed).
+- `appendRows` (`getLastRow()+1` and one `setValues`) lands directly under the last claim. Check no formula or blank-string column pushes `getLastRow` down.
+- Apostrophe read-back for Token, key, Number and a `=1+1` name.
+- `Created` and `Promoted at` round-trip.
+- A text/plain POST from the Pages origin gets JSON back with no preflight.
+- `SITE_URL` and the web-app version are set before the test.
+
+**Verdict: SIGN-OFF.** F1–F4, F6, F7 and F9 are fixed and pinned. R1 (S3) should get a failing test and its one-line fix before G1. R2–R4 are S4s for the PM. F5 (S-13) and F8 (S-10) are carried as recorded.
