@@ -162,6 +162,8 @@ describe("catalogue: fields across all four tabs (4.3)", () => {
       ["https://www.amazon.com.au/dp/B0TEST1234?psc=1&smid=X1", "https://www.amazon.com.au/dp/B0TEST1234"],
       ["https://amazon.eg/dp/B0TEST1234?th=1", "https://amazon.eg/dp/B0TEST1234"],
       ["https://www.amazon.in/dp/B0TEST1234?ref_=x#reviews", "https://www.amazon.in/dp/B0TEST1234#reviews"],
+      ["HTTPS://WWW.AMAZON.IN/dp/B0TEST1234?qid=1", "HTTPS://WWW.AMAZON.IN/dp/B0TEST1234"],
+      ["https://www.amazon.co.uk:443/dp/B0TEST1234?qid=1", "https://www.amazon.co.uk:443/dp/B0TEST1234"],
     ])("drops the whole query on an Amazon link: %s", (url, want) => {
       expect(linkFor(url)).toBe(want);
     });
@@ -173,6 +175,7 @@ describe("catalogue: fields across all four tabs (4.3)", () => {
       ["https://shop.example.com/p/lamp?gclid=4&pid=LMP1&utm_campaign=x", "https://shop.example.com/p/lamp?pid=LMP1"],
       ["https://shop.example.com/p/lamp?GCLID=4", "https://shop.example.com/p/lamp"],
       ["https://shop.example.com/p/lamp?gclid=4#specs", "https://shop.example.com/p/lamp#specs"],
+      ["https://shop.example.com/p/lamp?a=1&&gclid=2&", "https://shop.example.com/p/lamp?a=1"],
     ])("drops only known trackers on other sites: %s", (url, want) => {
       expect(linkFor(url)).toBe(want);
     });
@@ -182,6 +185,8 @@ describe("catalogue: fields across all four tabs (4.3)", () => {
       "https://shop.example.com/p/lamp?pid=LMP1&lid=2",
       "https://www.goodreads.com/book/show/123.Some_Book",
       "https://notamazon.example/dp/X?keep=1",
+      "https://amazon.in.evil.example/p?id=7",
+      "https://www.amazon.example.org/p?id=7",
     ])("leaves a link with no tracking unchanged: %s", (url) => {
       expect(linkFor(url)).toBe(url);
     });
