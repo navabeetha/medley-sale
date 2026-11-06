@@ -1304,3 +1304,10 @@ Both forms would only carry the seller's own tracking, which is what D-037 remov
 
 ### Verdict
 **Passes QA (sign-off)**, with F1 (S3, low likelihood, a spec deviation) and the three coverage gaps going to the PM as follow-ups. F1 should get a failing test and a fix before any wider sharing. F2 needs a PM check on the live response. Note: during this review `docs/backlog/STATUS.md` showed an uncommitted edit made by another agent. QA did not touch it.
+
+**Re-check, 2026-11-06 (commits d5bf94f red, b9d808c green):**
+- Gate: fresh `npm run check` exited 0. Vitest 762 passed, Playwright 352 passed / 4 skipped, 3.4 KB, pii 0 findings.
+- F1 is fixed. `https://amazon.in.evil.example/p?id=7&gclid=1` now keeps `?id=7` (only `gclid` is dropped).
+- All three earlier surviving mutants now go red: the case-sensitive Amazon regex, removing the port strip, and keeping empty params. Putting back the old wide regex turns 2 tests red.
+- New S4 (note only): a host with a trailing dot (`www.amazon.in.`) is no longer treated as Amazon, so its query is kept. Not plausible in copied links.
+- F2 was checked by the PM on the live response. F3 and F4 are accepted as S4. **Sign-off stands.**
