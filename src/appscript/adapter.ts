@@ -30,6 +30,11 @@ class SheetTab implements Tab {
   private fullRange(): GoogleAppsScript.Spreadsheet.Range {
     return this.sheet.getRange(1, 1, this.sheet.getMaxRows(), this.sheet.getMaxColumns());
   }
+  setNote(row: number, col: number, text: string): void {
+    const range = this.sheet.getRange(row, col);
+    if (text === "") range.clearNote();
+    else range.setNote(text);
+  }
   getComments(): { row: number; col: number }[] {
     const out: { row: number; col: number }[] = [];
     this.fullRange().getNotes().forEach((r, i) =>

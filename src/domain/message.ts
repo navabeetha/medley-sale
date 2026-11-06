@@ -65,3 +65,16 @@ export function buildMessage(buyerName: string, units: MessageUnit[], siteUrl: s
   out.push("", `Change or back out: ${siteUrl.replace(/\/+$/, "")}/#/b/${token}`);
   return out.join("\n");
 }
+
+/**
+ * The seller's reply to one buyer, for the Message link column on Claims (brief 2.7). One unit:
+ * what they hold (or their place in line) and their private link. Ends with the link line, like
+ * the buyer's own message.
+ */
+export function buildSellerMessage(buyerName: string, unit: MessageUnit, siteUrl: string, token: string): string {
+  const price = unit.price === null ? "" : `, ${rupees(unit.price)}`;
+  const what = unit.outcome === "holder"
+    ? `${title(unit)}${price} is reserved for you.`
+    : `You are ${ordinal(unit.position ?? 1)} in line for ${title(unit)}${price}.`;
+  return [`Hi ${buyerName.replace(/\s+/g, " ")}!`, what, "", `Change or back out: ${siteUrl.replace(/\/+$/, "")}/#/b/${token}`].join("\n");
+}

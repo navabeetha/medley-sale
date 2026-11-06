@@ -12,6 +12,8 @@ import { CATALOGUE_CACHE_KEY } from "./handle-get";
 import { findHeaderRow } from "./header-row";
 import { colOf, guardText, hex, itemNameCol } from "./migrate";
 import type { CellValue, Spreadsheet, Tab } from "./sheet";
+import { text, unapostrophe, unguard } from "./cell-text";
+import { cleanSiteUrl } from "./site-url";
 import { buildMessage, type MessageUnit } from "../domain/message";
 import { normalisePhone } from "../domain/phone";
 import { recalculate, type ClaimInput, type ClaimResult, type ClaimRole, type ClaimState } from "../domain/queue";
@@ -63,12 +65,6 @@ const LOCK_WAIT_MS = 30_000;
  * This also keeps formulas and odd text out of the sheet.
  */
 const KEY_PATTERN = /^[A-Za-z0-9-]{16,64}$/;
-/**
- * QA F3: the private link in the WhatsApp message needs an absolute https URL with a host.
- * (Regex, not `new URL`: URL is not available in Apps Script V8.)
- */
-const SITE_URL_PATTERN = /^https:\/\/[^\s/?#@]+(?:[/?#]\S*)?$/;
-
 const CLAIMS = "Claims";
 const BOOKINGS = "Bookings";
 /** Tabs customers can see items from (D-030 rule 9). Anything else is "unavailable", even if it has the item. */
@@ -121,18 +117,6 @@ interface ItemInfo {
   published: boolean;
 }
 
-const text = (v: CellValue | undefined): string | null => {
-  const s = v === null || v === undefined ? "" : String(v).trim();
-  return s === "" ? null : s;
-};
-/** Undo guardText for reading back what we wrote. (Real Sheets drops the apostrophe itself.) */
-const unguard = (s: string): string => (/^'[=+\-@]/.test(s) ? s.slice(1) : s);
-/**
- * Strips ONE leading apostrophe. Token, Idempotency key and Number are always written with one
- * (QA F9: Sheets must never re-type an all-digit token as a number); real Sheets drops it on read,
- * the fake keeps it, so readers accept both.
- */
-const unapostrophe = (s: string): string => (s.startsWith("'") ? s.slice(1) : s);
 /** True when a stored cell holds `value` (once its apostrophe, if any, is removed). */
 const sameText = (cell: CellValue | undefined, value: string): boolean => {
   const c = text(cell);
@@ -186,7 +170,7 @@ interface ClaimRow {
   promotedAt: string | null;
 }
 
-function readClaims(tab: Tab): { head: CellValue[]; rows: ClaimRow[]; maxClaimId: number } {
+function readClaims(tab: Tab): { head: CellValue[]; rows: ClaimRow[]; maxClaimId: number; rawBookingIds: Set<number> } {
   const grid = tab.getGrid();
   const head = grid[0] ?? [];
   const c = Object.fromEntries(["Claim ID", "Booking ID", "Item ID", "Number", "State", "Promoted at"].map((h) => [h, colOf(head, h)]));
@@ -207,7 +191,10 @@ function readClaims(tab: Tab): { head: CellValue[]; rows: ClaimRow[]; maxClaimId
     });
   });
   // From the whole column, so a row with an odd State still keeps its id out of reuse.
-  return { head, rows, maxClaimId: maxNumber(grid, c["Claim ID"]!) };
+  // R1: every Booking ID present in the raw grid, whatever the row's State, so a typo'd State never makes a booking look orphaned.
+  const rawBookingIds = new Set<number>();
+  if (c["Booking ID"]) for (const r of grid.slice(1)) { const v = r[c["Booking ID"]! - 1]; if (v !== null && v !== undefined && v !== "") rawBookingIds.add(Number(v)); }
+  return { head, rows, maxClaimId: maxNumber(grid, c["Claim ID"]!), rawBookingIds };
 }
 
 /** Highest numeric value in a column (non-numbers ignored), or 0. */
@@ -260,7 +247,9 @@ export function reserve(ss: Spreadsheet, request: unknown, deps: ReserveDeps): R
   }
 
   // QA F3: refuse before the lock when the private link could not be built.
-  if (!SITE_URL_PATTERN.test(deps.siteUrl)) return fail("not-configured");
+  // R3: the trimmed URL is the one used from here on.
+  const siteUrl = cleanSiteUrl(deps.siteUrl);
+  if (siteUrl === null) return fail("not-configured");
   const parsed = parse(request);
   if (typeof parsed === "string") return fail(parsed);
   const claimsTab = ss.getTab(CLAIMS);
@@ -274,20 +263,24 @@ export function reserve(ss: Spreadsheet, request: unknown, deps: ReserveDeps): R
   }
   let wrote = false;
   try {
-    return reserveLocked(ss, claimsTab, bookingsTab, parsed, deps, () => { wrote = true; });
+    return reserveLocked(ss, claimsTab, bookingsTab, parsed, { ...deps, siteUrl }, () => { wrote = true; });
   } finally {
-    // A write that failed part-way may still have changed the queue, so clear the cache then too.
-    if (wrote) {
-      try {
-        // QA F2: Apps Script may batch writes; commit them while we still hold the lock, or the next
-        // request could read stale Claims and make two holders of the last unit.
-        ss.flush();
-      } finally {
-        try { deps.cache.remove(CATALOGUE_CACHE_KEY); } catch { /* the booking is saved; a stale cache expires on its own */ }
+    // R2: releasing the lock is in its own outer finally, so a flush that throws still frees it.
+    try {
+      // A write that failed part-way may still have changed the queue, so clear the cache then too.
+      if (wrote) {
+        try {
+          // QA F2: Apps Script may batch writes; commit them while we still hold the lock, or the next
+          // request could read stale Claims and make two holders of the last unit.
+          ss.flush();
+        } finally {
+          try { deps.cache.remove(CATALOGUE_CACHE_KEY); } catch { /* the booking is saved; a stale cache expires on its own */ }
+        }
       }
+    } finally {
+      // QA F6: a failing release must not turn a saved booking into an error (the lock expires on its own).
+      try { deps.lock.releaseLock(); } catch { /* ignore */ }
     }
-    // QA F6: a failing release must not turn a saved booking into an error (the lock expires on its own).
-    try { deps.lock.releaseLock(); } catch { /* ignore */ }
   }
 }
 
@@ -297,7 +290,7 @@ function reserveLocked(
 ): ReserveResponse {
   const now = deps.now();
   const items = readItems(ss);
-  const { head: claimHead, rows: claims, maxClaimId } = readClaims(claimsTab);
+  const { head: claimHead, rows: claims, maxClaimId, rawBookingIds } = readClaims(claimsTab);
   const bookingGrid = bookingsTab.getGrid();
   const bookingHead = bookingGrid[0] ?? [];
 
@@ -311,7 +304,8 @@ function reserveLocked(
     // QA F4: only the number that made the booking may replay it. Never reveal its token otherwise.
     if (!sameText(prev("Number"), req.number)) return fail("invalid-request");
     const prevId = Number(prev("Booking ID"));
-    if (claims.some((c) => c.bookingId !== null && Number(c.bookingId) === prevId)) {
+    // R1: orphaned only when NO raw row carries the id; a row with an odd State still counts as saved.
+    if (rawBookingIds.has(prevId)) {
       return replay(previous, bookingHead, claims, items, deps, now);
     }
     // QA F1b: the booking exists but none of its claims were saved (the claims write failed).
