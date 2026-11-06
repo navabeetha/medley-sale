@@ -45,7 +45,7 @@ export interface SkippedItem {
 }
 export type ReserveError =
   | "invalid-name" | "invalid-number" | "invalid-basket" | "invalid-request"
-  | "too-many-claims" | "nothing-available" | "not-reserving" | "busy";
+  | "too-many-claims" | "nothing-available" | "not-reserving" | "not-configured" | "busy";
 export type ReserveResponse =
   | { ok: true; token: string; bookingId: number; units: ReserveUnit[]; skipped: SkippedItem[]; whatsappUrl: string | null }
   | { ok: false; error: ReserveError; skipped?: SkippedItem[] };
@@ -57,6 +57,17 @@ const MAX_UNITS_PER_BASKET = 15;
 const MAX_ACTIVE_CLAIMS_PER_NUMBER = 20;
 /** How long to wait for the script lock. Under it the whole call takes well under a second. */
 const LOCK_WAIT_MS = 30_000;
+
+/**
+ * QA F4: an idempotency key is a bearer secret for the booking it made, so it must be long and plain.
+ * This also keeps formulas and odd text out of the sheet.
+ */
+const KEY_PATTERN = /^[A-Za-z0-9-]{16,64}$/;
+/**
+ * QA F3: the private link in the WhatsApp message needs an absolute https URL with a host.
+ * (Regex, not `new URL`: URL is not available in Apps Script V8.)
+ */
+const SITE_URL_PATTERN = /^https:\/\/[^\s/?#@]+(?:[/?#]\S*)?$/;
 
 const CLAIMS = "Claims";
 const BOOKINGS = "Bookings";
@@ -76,7 +87,7 @@ const fail = (error: ReserveError, skipped?: SkippedItem[]): ReserveResponse => 
 /** Everything checkable without the sheet. A string means the error code to answer with. */
 function parse(request: Record<string, unknown>): ParsedRequest | ReserveError {
   const key = request.idempotencyKey;
-  if (typeof key !== "string" || key === "") return "invalid-request";
+  if (typeof key !== "string" || !KEY_PATTERN.test(key)) return "invalid-request";
   const name = typeof request.name === "string" ? request.name.trim() : "";
   if (name.length < MIN_NAME || name.length > MAX_NAME) return "invalid-name";
   const number = normalisePhone(request.number);
@@ -116,11 +127,20 @@ const text = (v: CellValue | undefined): string | null => {
 };
 /** Undo guardText for reading back what we wrote. (Real Sheets drops the apostrophe itself.) */
 const unguard = (s: string): string => (/^'[=+\-@]/.test(s) ? s.slice(1) : s);
-/** True when a stored cell holds `value`, whether or not the sheet kept the apostrophe guard. */
+/**
+ * Strips ONE leading apostrophe. Token, Idempotency key and Number are always written with one
+ * (QA F9: Sheets must never re-type an all-digit token as a number); real Sheets drops it on read,
+ * the fake keeps it, so readers accept both.
+ */
+const unapostrophe = (s: string): string => (s.startsWith("'") ? s.slice(1) : s);
+/** True when a stored cell holds `value` (once its apostrophe, if any, is removed). */
 const sameText = (cell: CellValue | undefined, value: string): boolean => {
   const c = text(cell);
-  return c === value || c === guardText(value);
+  return c !== null && unapostrophe(c) === value;
 };
+/** Is the honeypot field filled in? `0`, false, null, "" and absent are not (QA F8: autofill must not lose a real booking). */
+const trapTripped = (v: unknown): boolean =>
+  (typeof v === "string" && v !== "") || v === true || (typeof v === "number" && v !== 0);
 
 /** Every item on every item tab, hidden ones too: we need a hidden item's name to skip it politely. */
 function readItems(ss: Spreadsheet): Map<string, ItemInfo> {
@@ -235,11 +255,12 @@ export function reserve(ss: Spreadsheet, request: unknown, deps: ReserveDeps): R
 
   // 6.3 honeypot: a bot fills the hidden field. Answer like a success so it learns
   // nothing, but save nothing, take no lock and clear no cache. The token matches no booking.
-  const trap = request.website;
-  if (trap !== undefined && trap !== null && trap !== "") {
+  if (trapTripped(request.website)) {
     return { ok: true, token: hex(deps.randomBytes(16)), bookingId: 0, units: [], skipped: [], whatsappUrl: null };
   }
 
+  // QA F3: refuse before the lock when the private link could not be built.
+  if (!SITE_URL_PATTERN.test(deps.siteUrl)) return fail("not-configured");
   const parsed = parse(request);
   if (typeof parsed === "string") return fail(parsed);
   const claimsTab = ss.getTab(CLAIMS);
@@ -257,9 +278,16 @@ export function reserve(ss: Spreadsheet, request: unknown, deps: ReserveDeps): R
   } finally {
     // A write that failed part-way may still have changed the queue, so clear the cache then too.
     if (wrote) {
-      try { deps.cache.remove(CATALOGUE_CACHE_KEY); } catch { /* the booking is saved; a stale cache expires on its own */ }
+      try {
+        // QA F2: Apps Script may batch writes; commit them while we still hold the lock, or the next
+        // request could read stale Claims and make two holders of the last unit.
+        ss.flush();
+      } finally {
+        try { deps.cache.remove(CATALOGUE_CACHE_KEY); } catch { /* the booking is saved; a stale cache expires on its own */ }
+      }
     }
-    deps.lock.releaseLock();
+    // QA F6: a failing release must not turn a saved booking into an error (the lock expires on its own).
+    try { deps.lock.releaseLock(); } catch { /* ignore */ }
   }
 }
 
@@ -276,7 +304,20 @@ function reserveLocked(
   // T-08 idempotency: a repeated key returns the original booking, before any limit is applied.
   const keyCol = colOf(bookingHead, "Idempotency key");
   const previous = keyCol ? bookingGrid.slice(1).find((r) => sameText(r[keyCol - 1], req.key)) : undefined;
-  if (previous) return replay(previous, bookingHead, claims, items, deps, now);
+  // Pieces of an earlier booking we may be completing (QA F1b); null for a fresh booking.
+  let resume: { bookingId: number; token: string } | null = null;
+  if (previous) {
+    const prev = (h: string): CellValue | undefined => previous[colOf(bookingHead, h) - 1];
+    // QA F4: only the number that made the booking may replay it. Never reveal its token otherwise.
+    if (!sameText(prev("Number"), req.number)) return fail("invalid-request");
+    const prevId = Number(prev("Booking ID"));
+    if (claims.some((c) => c.bookingId !== null && Number(c.bookingId) === prevId)) {
+      return replay(previous, bookingHead, claims, items, deps, now);
+    }
+    // QA F1b: the booking exists but none of its claims were saved (the claims write failed).
+    // Finish it under the original id and token rather than answer an empty success.
+    resume = { bookingId: prevId, token: unapostrophe(text(prev("Token")) ?? "") };
+  }
 
   // Decide what each requested line can get. Skipped lines are named, in request order.
   const skipped: SkippedItem[] = [];
@@ -321,23 +362,24 @@ function reserveLocked(
     return { claimId, itemId: item.id, name: item.name, outcome: r.role === "holder" ? "holder" : "waiting", position: r.position };
   });
 
-  const token = hex(deps.randomBytes(16));
-  const bookingId = maxNumber(bookingGrid, colOf(bookingHead, "Booking ID")) + 1;
+  const token = resume ? resume.token : hex(deps.randomBytes(16));
+  const bookingId = resume ? resume.bookingId : maxNumber(bookingGrid, colOf(bookingHead, "Booking ID")) + 1;
   const number = guardText(req.number);
   const name = guardText(req.name);
 
-  // Booking first, then claims: a failure part-way can leave a booking with no claims
-  // (harmless) but never claims, which move everyone's queue, without a booking.
+  // Booking first, then ALL claims in one batched write (QA F1a): a failure leaves a booking with
+  // zero claims, never some. A retry completes it (F1b). Claims without a booking never happen,
+  // because claims move everyone's queue. Token and key get a forced apostrophe (QA F9).
   markWrote();
-  bookingsTab.appendRow(rowFor(BOOKINGS, bookingHead, {
-    "Booking ID": bookingId, Token: token, Name: name, Number: number, Created: now, "Idempotency key": guardText(req.key),
-  }));
-  for (const { claimId, item } of created) {
-    claimsTab.appendRow(rowFor(CLAIMS, claimHead, {
-      "Claim ID": claimId, "Booking ID": bookingId, "Item ID": item.id, Item: guardText(item.name), Name: name,
-      Number: number, State: "active", Created: now,
+  if (!resume) {
+    bookingsTab.appendRow(rowFor(BOOKINGS, bookingHead, {
+      "Booking ID": bookingId, Token: `'${token}`, Name: name, Number: number, Created: now, "Idempotency key": `'${req.key}`,
     }));
   }
+  claimsTab.appendRows(created.map(({ claimId, item }) => rowFor(CLAIMS, claimHead, {
+    "Claim ID": claimId, "Booking ID": bookingId, "Item ID": item.id, Item: guardText(item.name), Name: name,
+    Number: number, State: "active", Created: now,
+  })));
   // Promoted at for the touched items' older claims: kept for holders, cleared for non-holders (6.1 rule 3).
   const promotedCol = colOf(claimHead, "Promoted at");
   for (const c of claims) {
@@ -357,7 +399,7 @@ function replay(
 ): ReserveResponse {
   const cell = (h: string): CellValue | undefined => booking[colOf(bookingHead, h) - 1];
   const bookingId = Number(cell("Booking ID"));
-  const token = text(cell("Token")) ?? "";
+  const token = unapostrophe(text(cell("Token")) ?? "");
   const name = unguard(text(cell("Name")) ?? "");
 
   // Current outcomes of this booking's claims. `skipped` is not stored, so it is [] on a replay.

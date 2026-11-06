@@ -19,6 +19,8 @@ export interface Tab {
   setCell(row: number, col: number, value: CellValue): void;
   /** Append a row after the last used row. */
   appendRow(values: CellValue[]): void;
+  /** Append several rows after the last used row in ONE write: all of them or none (QA F1). */
+  appendRows(rows: CellValue[][]): void;
   getComments(): { row: number; col: number }[];
   /** Removes every comment; returns how many were removed. */
   clearComments(): number;
@@ -38,4 +40,6 @@ export interface Spreadsheet {
   getTabs(): Tab[];
   getTab(name: string): Tab | undefined;
   addTab(name: string): Tab;
+  /** Commit pending writes now (SpreadsheetApp.flush()); call before releasing a lock (QA F2). */
+  flush(): void;
 }
