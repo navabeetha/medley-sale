@@ -41,6 +41,14 @@ export interface BasketView {
   sync(items: readonly CatalogueItem[], reserving: boolean, live: boolean): void;
   /** The Add / stepper control for a row, or null outside reserving mode. */
   control(item: CatalogueItem): HTMLElement | null;
+  /** The entries as shown now (S-10 reservation screen). */
+  entries(): Basket;
+  /** Takes a whole entry out (S-10 Remove). */
+  remove(id: string): void;
+  /** Empties the basket, including entries a cached render hid (S-10, after a booking). */
+  clear(): void;
+  /** The reservation screen has its own submit button, so it hides the sticky bar (PM, S-10). */
+  setBarHidden(hidden: boolean): void;
 }
 
 export function createBasketView(): BasketView {
@@ -51,11 +59,15 @@ export function createBasketView(): BasketView {
   // Entries a cached render hid because the (possibly stale) cached list lacks them. They are still in
   // storage and are kept there until a live response says whether they really left (QA S-09 F4).
   let hidden: Basket = [];
+  // B3 (S-10): a cached render lowers displayed units to a possibly stale free count. The buyer's real
+  // choice is kept here (id -> units) so storage is not lowered by an unrelated change; only a live render lowers it.
+  const capped = new Map<string, number>();
+  let barHidden = false;
   let watcher: ResizeObserver | null = null;
   const updaters = new Map<string, () => void>(); // item id -> refresh its control
 
   function persistAndRender(): void {
-    writeStored([...basket, ...hidden]);
+    writeStored([...basket.map((e) => ({ id: e.id, units: capped.get(e.id) ?? e.units })), ...hidden]);
     for (const u of updaters.values()) u();
     renderBar();
   }
@@ -63,6 +75,7 @@ export function createBasketView(): BasketView {
   // Applies a change; a refusal leaves the basket as it was and shows the message.
   function change(id: string, units: number, max: number): void {
     const r = setUnits(basket, id, units, max);
+    if (!r.refused) capped.delete(id); // the buyer has now chosen this count themselves
     basket = r.basket;
     message = r.refused ? refusalText(r.refused) : null;
     persistAndRender();
@@ -80,7 +93,7 @@ export function createBasketView(): BasketView {
   // The bar exists only while something is selected (brief 7). Button text carries the count, so
   // nothing depends on colour.
   function renderBar(): void {
-    if (!active || totalUnits(basket) === 0) {
+    if (!active || barHidden || totalUnits(basket) === 0) {
       bar?.remove();
       bar = null;
       watcher?.disconnect();
@@ -103,7 +116,7 @@ export function createBasketView(): BasketView {
       inner.append(m);
     }
     const go = el("a", basketLabel(basket), "basket-reserve", "basket-reserve");
-    go.href = "#/reserve"; // S-10 builds that screen
+    go.href = "#/reserve";
     inner.append(go);
     bar.replaceChildren(inner);
     publishBarHeight();
@@ -155,21 +168,48 @@ export function createBasketView(): BasketView {
 
   return {
     control,
+    entries: () => basket,
+    remove: (id) => change(id, 0, 0),
+    clear() {
+      basket = emptyBasket();
+      hidden = [];
+      capped.clear();
+      message = null;
+      persistAndRender();
+    },
+    setBarHidden(h) {
+      barHidden = h;
+      renderBar();
+    },
     sync(items, reserving, live) {
       active = reserving;
       document.body.classList.toggle("reserving", reserving);
       updaters.clear(); // rows are about to be rebuilt
       if (reserving) {
-        // Items that left the catalogue drop silently; units shrink to what is free now.
-        const pruned = pruneBasket(basket, items);
-        const stillHidden = hidden;
         if (live) {
-          // Entries hidden by the cached render come back if the live list still has them.
+          // The live list is the truth: restore the buyer's real counts, add the entries the cached render
+          // hid, then lower to what is free now. Entries are added in order only while the total stays at
+          // or under 15 (B2); any that do not fit are dropped with the limit message.
+          const full = pruneBasket([...basket.map((e) => ({ id: e.id, units: capped.get(e.id) ?? e.units })), ...hidden], items);
+          let next = emptyBasket();
+          for (const e of full) {
+            const r = setUnits(next, e.id, e.units, MAX_BASKET_UNITS);
+            if (r.refused === "basket-limit") message = refusalText("basket-limit");
+            else next = r.basket;
+          }
+          basket = next;
           hidden = [];
-          basket = pruneBasket([...basket, ...stillHidden], items);
+          capped.clear();
           writeStored(basket);
         } else {
-          // Cached list: prune for display only. Whole entries it hides stay in storage until live (F4).
+          // Cached list: prune for display only. Lowered counts (B3) and whole entries it hides (F4) stay in
+          // storage until live.
+          const pruned = pruneBasket(basket, items);
+          capped.clear();
+          for (const e of basket) {
+            const p = pruned.find((x) => x.id === e.id);
+            if (p && p.units < e.units) capped.set(e.id, e.units);
+          }
           hidden = basket.filter((e) => !pruned.some((p) => p.id === e.id));
           basket = pruned;
         }

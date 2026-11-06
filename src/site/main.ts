@@ -4,6 +4,7 @@ import type { CatalogueItem } from "../api/catalogue";
 import { createBasketView } from "./basket-view";
 import { API_URL } from "./config";
 import { el } from "./dom";
+import { createReserveScreen } from "./reserve-screen";
 import {
   availabilityLabels, displayTitle, formatPrice, pickupLabel, reserveUrl, sortItems, subtitle, validItems,
 } from "./view-model";
@@ -122,13 +123,21 @@ function start(root: HTMLElement): void {
   const notes = el("div");
   const list = el("ul", undefined, "catalogue", "catalogue");
   list.setAttribute("role", "list");
-  root.replaceChildren(
+  // Two screens in one page (S-10): the catalogue, and the reservation form at #/reserve.
+  const catalogueView = el("div");
+  catalogueView.append(
     el("h1", "A44 Medley Garage Sale"),
     el("p", "This is an early version. If anything looks odd, just message me.", "note", "early-note"),
     status, notes, list,
   );
+  const reserveView = el("div");
+  root.replaceChildren(catalogueView, reserveView);
 
   const basket = createBasketView();
+  const reserve = createReserveScreen(reserveView, basket, (token) => {
+    location.hash = `#/b/${encodeURIComponent(token)}`; // S-12 builds that page; the token is only ever in the hash
+  });
+  let reserving = false;
   let photos: Manifest = readManifestCache(); // last good manifest: repeat visits show thumbnails at once
   let contactUrl: string | null = null;
   let hasList = false;
@@ -149,9 +158,26 @@ function start(root: HTMLElement): void {
     }
   }
 
+  // The reservation screen replaces the catalogue only in reserving mode (D-038 rule 6); otherwise #/reserve
+  // is just the normal R1 list. Anything else in the hash (#/, #/b/<token>) shows the catalogue.
+  function route(): void {
+    const onReserve = reserving && location.hash === "#/reserve";
+    const wasOnReserve = reserveView.firstChild !== null;
+    catalogueView.hidden = onReserve;
+    basket.setBarHidden(onReserve);
+    if (onReserve) {
+      reserve.open();
+      if (!wasOnReserve) window.scrollTo(0, 0);
+    } else {
+      reserve.close();
+    }
+  }
+  window.addEventListener("hashchange", route);
+
   function show(c: Catalogue, live: boolean): void {
     contactUrl = c.contactUrl ?? contactUrl;
     hasList = true;
+    reserving = c.reserving;
     const items = sortItems(c.items);
     basket.sync(c.items, c.reserving, live); // before the rows, which ask it for their controls
     // The live list rebuilds every row, which would drop keyboard focus to <body> (QA S-09 F3):
@@ -170,6 +196,8 @@ function start(root: HTMLElement): void {
     notes.replaceChildren(...lines);
     if (wasRow) restoreFocus(wasRow, wasTestId);
     if (manifestSettled) applyPhotos();
+    reserve.update(c.items);
+    route();
   }
 
   function restoreFocus(rowId: string, testId: string | undefined): void {

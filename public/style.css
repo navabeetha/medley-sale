@@ -33,7 +33,31 @@ button { padding: 0 1rem; }
    covered, even in the instant before script has measured it. */
 html { scroll-padding-bottom: var(--bar-h, 0px); }
 body.reserving main { padding-bottom: 1rem; }
-.basket-bar { position: sticky; bottom: 0; background: #fff; border-top: 1px solid #bbb; box-shadow: 0 -2px 8px rgba(0, 0, 0, .12); padding: .5rem 1rem; padding-bottom: calc(.5rem + env(safe-area-inset-bottom)); }
+/* B1 (S-10): on a short page the bar would float mid-screen. A full-height column with margin-top: auto on the
+   bar pushes it to the bottom. In a flex column main's auto side margins would shrink it to its content, so it
+   gets an explicit width (100% less its own side padding) instead. */
+body.reserving { min-height: 100dvh; display: flex; flex-direction: column; }
+body.reserving main { width: calc(100% - 2rem); box-sizing: content-box; }
+.basket-bar { margin-top: auto; position: sticky; bottom: 0; background: #fff; border-top: 1px solid #bbb; box-shadow: 0 -2px 8px rgba(0, 0, 0, .12); padding: .5rem 1rem; padding-bottom: calc(.5rem + env(safe-area-inset-bottom)); }
 .basket-bar-inner { max-width: 40rem; margin: 0 auto; }
 .basket-message { color: #8a0018; font-weight: 600; font-size: .9rem; margin-bottom: .5rem; }
 .basket-reserve { display: flex; align-items: center; justify-content: center; min-height: 48px; box-sizing: border-box; border-radius: 8px; background: #0b57d0; color: #fff; font-weight: 700; text-decoration: none; }
+/* S-10 reservation screen. Fields and buttons are at least 44 px; errors sit right under their field and are
+   words as well as colour. */
+[hidden] { display: none !important; }
+h2 { font-size: 1.25rem; margin: .5rem 0; }
+.back { display: inline-flex; align-items: center; min-height: 44px; min-width: 44px; color: #0b57d0; font-weight: 600; }
+.reserve-items { list-style: none; margin: 0 0 1rem; padding: 0; }
+.reserve-item { display: flex; gap: .75rem; align-items: flex-start; padding: .75rem 0; border-top: 1px solid #ddd; }
+.remove, .forget { border: 1px solid #0b57d0; border-radius: 8px; background: #fff; color: #0b57d0; font-weight: 600; }
+.forget { margin-top: .75rem; }
+.field { margin-bottom: 1rem; }
+.field label { display: block; font-weight: 600; margin-bottom: .25rem; }
+.field input { display: block; width: 100%; min-height: 44px; box-sizing: border-box; padding: 0 .75rem; font: inherit; border: 1px solid #767676; border-radius: 8px; }
+.field input[aria-invalid="true"] { border: 2px solid #b00020; }
+.field-error { color: #8a0018; font-weight: 600; font-size: .9rem; margin-top: .25rem; }
+.submit { display: block; width: 100%; min-height: 48px; margin-top: 1rem; border: 0; border-radius: 8px; background: #0b57d0; color: #fff; font-weight: 700; }
+.submit:disabled { background: #767676; }
+.skipped { margin: .5rem 0 0; padding-left: 1.25rem; }
+/* Honeypot (S-11): off screen and tiny, but not display:none or visibility:hidden, which bots look for. */
+.hp { position: absolute; left: -9999px; width: 1px; height: 1px; opacity: 0; overflow: hidden; }
