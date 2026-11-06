@@ -11,7 +11,7 @@ import { claimColumns, CLAIMS, BLANK_STATE, NOT_A_STATE, canWriteStateNote, isOu
 import type { CellValue, Spreadsheet } from "./sheet";
 import { colOf, isBlank } from "./migrate";
 import { text } from "./cell-text";
-import { canMarkSold, type ClaimState } from "../domain/queue";
+import { canMarkSold, isRefusalReason, type ClaimState } from "../domain/queue";
 
 export interface ClaimsEdit {
   tab: string;
@@ -31,6 +31,9 @@ export type EditResult =
   | { handled: false; error?: "busy" }
   | { handled: true; reverted: false }
   | { handled: true; reverted: true; reason: string };
+
+/** Between her note and our reason in a combined State note. */
+const SEP = "\n\n— ";
 
 const isState = (v: unknown): v is ClaimState => v === "active" || v === "released" || v === "sold";
 
@@ -106,10 +109,13 @@ export function onClaimsEdit(ss: Spreadsheet, edit: ClaimsEdit, deps: SellerDeps
         markWrote();
         if (oldKnown) claimsTab.setCell(edit.row, edit.column, edit.oldValue);
         // Q1: her own note stays; the sale is still put back.
-        const free = canWriteStateNote(claimsTab.getNote(edit.row, edit.column));
-        if (free) claimsTab.setNote(edit.row, edit.column, verdict.reason);
+        // Her own note stays and ours goes after it (append, never overwrite); a repeat adds nothing.
+        const had = claimsTab.getNote(edit.row, edit.column);
+        const suffix = `${SEP}${verdict.reason}`;
+        const combined = canWriteStateNote(had) ? verdict.reason : had!.endsWith(suffix) ? had! : had + suffix;
+        if (combined !== had) claimsTab.setNote(edit.row, edit.column, combined);
         if (oldKnown) return { handled: true, reverted: true, reason: verdict.reason };
-        if (free) note = verdict.reason;
+        note = combined;
       }
     }
     // An accepted edit removes the explanation left by an earlier refusal, typo or blank, but only OURS (F10):
@@ -117,9 +123,16 @@ export function onClaimsEdit(ss: Spreadsheet, edit: ClaimsEdit, deps: SellerDeps
     if (note !== "") {
       markWrote();
       claimsTab.setNote(edit.row, edit.column, note);
-    } else if (isOurStateNote(claimsTab.getNote(edit.row, edit.column))) {
-      markWrote();
-      claimsTab.setNote(edit.row, edit.column, "");
+    } else {
+      const had = claimsTab.getNote(edit.row, edit.column);
+      const cut = had === null ? -1 : had.lastIndexOf(SEP);
+      if (isOurStateNote(had)) {
+        markWrote();
+        claimsTab.setNote(edit.row, edit.column, "");
+      } else if (cut >= 0 && isRefusalReason(had!.slice(cut + SEP.length))) {
+        markWrote();
+        claimsTab.setNote(edit.row, edit.column, had!.slice(0, cut)); // only our suffix; her text stays byte for byte
+      }
     }
 
     const previousRoles = rolesOf(item, oldKnown ? before : own.map((c) => toInput(c, null)), deps.now());

@@ -36,6 +36,6 @@ export function waOpened(ss: Spreadsheet, request: unknown, deps: SellerDeps): W
     markWrote();
     tab.setCell(i + 1, openedCol, deps.now());
     return { ok: true };
-  });
+  }, false); // a Bookings stamp cannot change the catalogue, so the cache stays
   return out.busy ? { ok: false, error: "busy" } : out.value;
 }

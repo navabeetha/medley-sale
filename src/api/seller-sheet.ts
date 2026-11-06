@@ -50,7 +50,7 @@ const LOCK_WAIT_MS = 30_000;
  * the cache. The release is in its own outer finally (R2): a throwing flush must not leave the lock held.
  */
 export function locked<T>(
-  ss: Spreadsheet, deps: SellerDeps, work: (markWrote: () => void) => T,
+  ss: Spreadsheet, deps: SellerDeps, work: (markWrote: () => void) => T, clearCache = true,
 ): { busy: true } | { busy: false; value: T } {
   try {
     deps.lock.waitLock(LOCK_WAIT_MS);
@@ -66,7 +66,7 @@ export function locked<T>(
         try {
           ss.flush(); // commit while we still hold the lock, or the next reader sees stale Claims (QA F2)
         } finally {
-          try { deps.cache.remove(CATALOGUE_CACHE_KEY); } catch { /* the sheet is saved; a stale cache expires on its own */ }
+          try { if (clearCache) deps.cache.remove(CATALOGUE_CACHE_KEY); } catch { /* the sheet is saved; a stale cache expires on its own */ }
         }
       }
     } finally {

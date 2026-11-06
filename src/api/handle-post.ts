@@ -10,7 +10,7 @@ export interface PostDeps {
   /** S-14: release one claim of a booking, by token and claim id in the body. */
   backOut: (request: unknown) => unknown;
   /** S-13: record that the buyer's browser went to WhatsApp, by token in the body. */
-  waOpened?: (request: unknown) => unknown; // optional: the pre-S-13 handle-post test helper builds deps without it (absent = unknown action)
+  waOpened: (request: unknown) => unknown;
 }
 
 export function handlePost(body: string | undefined, deps: PostDeps): string {

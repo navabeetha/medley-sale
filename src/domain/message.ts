@@ -32,13 +32,15 @@ function ordinal(n: number): string {
 /** "Air purifier (Philips)": brand in parentheses after the name (S-13 seller note). Books: "Name by Author". */
 export function title(u: MessageUnit): string {
   const name = flatten(u.name), detail = u.detail === null ? "" : flatten(u.detail);
+  if (!name) return detail ? `Item${u.isBook ? " by " : " ("}${detail}${u.isBook ? "" : ")"}` : "Item";
   if (!detail) return name;
   return u.isBook ? `${name} by ${detail}` : `${name} (${detail})`;
 }
 
 /** Line breaks and runs of whitespace become one space, so typed text cannot start a new line in the chat. */
 function flatten(s: string): string {
-  return s.replace(/\s+/g, " ").trim();
+  // Lone surrogates become U+FFFD (a regex, not toWellFormed: Apps Script's V8 may lack it), or encodeURIComponent throws.
+  return s.replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, "\uFFFD").replace(/\s+/g, " ").trim();
 }
 
 /** The message as sections: lines before the bullets stay; each bullet is a line that can be dropped. */
@@ -85,7 +87,7 @@ function compose(parts: Part[], keep: number, siteUrl: string, token: string): s
   const total = parts.filter((p) => p.bullet).length;
   let seen = 0;
   const shown = parts.filter((p) => !p.bullet || ++seen <= keep);
-  while (shown.length && !shown[shown.length - 1]!.bullet && keep < total) shown.pop(); // no heading left without a bullet
+  while (shown.length > 1 && !shown[shown.length - 1]!.bullet && keep < total) shown.pop(); // no heading left without a bullet
   const lines = shown.map((p) => p.text);
   if (keep < total) lines.push(`…and ${total - keep} more`);
   lines.push("", linkLine(siteUrl, token));
