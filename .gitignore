@@ -6,7 +6,7 @@ private/
 .env.*
 
 # Apps Script / clasp: script ID and credentials stay local (D-016 notes)
-.clasp.json
+.clasp*.json
 .clasprc.json
 
 # Build output and dependencies
