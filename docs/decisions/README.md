@@ -46,5 +46,6 @@ New decisions are recorded here, one file each: `D-016-<slug>.md`, `D-017-<slug>
 | [D-035](D-035-browse-only-on-real-sheet.md) | Browse-only release reads the real sheet: ID/Quantity columns only, status mode without Claims | Accepted (the seller) |
 | [D-036](D-036-r1-qa-hardening.md) | Browse-only hardening: status ignores case and spaces, WhatsApp number needs its country code, addIdColumns checks all tabs first | Accepted (PM) |
 | [D-037](D-037-strip-link-tracking.md) | Item links lose ad/click tracking: whole query on Amazon, known tracker names elsewhere | Accepted (the seller) |
+| [D-038](D-038-fast-path-to-reserving.md) | Fast path to live reserving: S-07, S-08 and S-16 postponed; API and UI tracks in parallel | Accepted (the seller) |
 
-**Next free ID: D-038.** Update this line and the index whenever you add a decision.
+**Next free ID: D-039.** Update this line and the index whenever you add a decision.
