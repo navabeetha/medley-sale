@@ -1311,3 +1311,59 @@ Both forms would only carry the seller's own tracking, which is what D-037 remov
 - All three earlier surviving mutants now go red: the case-sensitive Amazon regex, removing the port strip, and keeping empty params. Putting back the old wide regex turns 2 tests red.
 - New S4 (note only): a host with a trailing dot (`www.amazon.in.`) is no longer treated as Amazon, so its query is kept. Not plausible in copied links.
 - F2 was checked by the PM on the live response. F3 and F4 are accepted as S4. **Sign-off stands.**
+
+## 2026-11-06: S-09 basket (branch S-09-basket, commits 8a5e3c7 red, c393cc9 green)
+
+**What changed:** reserving mode (D-038 rule 6, only when the catalogue says `reserving: true`) adds Add / "Join waiting list" toggles, a stepper for items with more than 1 free unit, and a fixed `Reserve (n)` bar. The bar shows a refusal message when a change would pass 15 units. The basket is stored in localStorage and pruned against each catalogue shown. New files: `src/site/basket.ts` (pure model), `src/site/basket-view.ts`, `src/site/dom.ts`. `public/index.html` gains `viewport-fit=cover`.
+
+**Verdict: SIGN-OFF**, with the follow-ups below going to the PM. There are no S1 or S2 findings, and every acceptance criterion has an automated test.
+
+### Gate (fresh run, each step run on its own)
+- `npm run typecheck`: clean. `npx eslint .`: clean.
+- `npx vitest run`: 32 files, 791 passed.
+- `npx playwright test` (4 projects, fresh build, no other server on the port): 480 passed, 4 skipped. The skips are the two CLS tests (`catalogue.spec.ts` "layout shift", `catalogue-qa-followups.spec.ts` F8 pin) on webkit-pixel and webkit-iphone. Both existed before this story; the layout-shift API is Chromium only.
+- `npm run size`: 5.0 KB gzipped of 50 KB. `node tools/pii-scan.mjs`: 209 files, 0 findings.
+- Red then green: 8a5e3c7 adds only the two test files, which import modules that do not exist yet. c393cc9 adds only `src/` and `public/`.
+
+### Verified by exploratory runs (mocked API, synthetic data, Chromium and WebKit, 390 px and 320 px)
+- Non-reserving mode (`reserving` false or missing): full-page screenshot and `#app` DOM are **byte-identical to main** at 390 px (Chromium). The body has no `reserving` class. A stored basket is left untouched and comes back when the mode returns to true.
+- No horizontal overflow at 320 px with long unbroken names. "Join waiting list" and "On waiting list ✓" fit on one line (159 x 44 px).
+- A 16th unit, from the stepper or from Add, rapid-clicked: one clear message ("You can reserve up to 15 items at a time. Remove one to add another."). The count stays at 15, and on Chromium focus stays on the button. The message clears after the next successful change and is not restored on reload.
+- Accessibility tree: Add is a button with `[pressed]`. The stepper is a group named "Quantity of <item>" with "Remove one" / "Add one" buttons. The bar is a link named "Reserve (n)". Space and Enter toggle Add.
+- Contrast: the disabled stepper glyph (#767676 on white) is 4.5:1. The disabled border (#bbb) is lower, which is allowed for disabled controls. The message colour (#8a0018) and the white-on-#0b57d0 button are well above 4.5:1.
+- CLS measured in Chromium: 0 when a cached R1 list turns into a live reserving list, and 0 when the bar appears and goes.
+- Reload with the API down keeps reserving mode and the basket. Covered by e2e too.
+
+### Findings (worst first)
+**F1, S3: with the refusal message showing, the bar covers the bottom of the last row's button.** The bar grows from 65 px to 116 px, but `main` keeps only 6rem (96 px) of bottom padding. Repro: at 390 or 320 px, fill the basket to 15, press + once more, then scroll to the end. The last row's button bottom is 8 px below the bar top (Chromium and WebKit). It is still tappable. It gets worse with larger text or a three-line message. Fix: size the padding from the bar's real height (for example set a CSS variable from `bar.offsetHeight` on each render), or reserve enough room for the message. Start with a failing e2e variant of "does not hide the last item" that has the message showing.
+
+**F2, S3: keyboard focus can land under the bar (WCAG 2.4.11).** Repro: at 390x600, add one item, scroll to the top, then press Tab through the list. 7 of 23 focus stops ended behind the bar (for example an "Add" with bottom at 581 px against a bar top at 535 px). Fix: `body.reserving` gets `scroll-padding-bottom` equal to the bar height, on `html`.
+
+**F3, S4: focus is lost when the live list replaces the cached list.** Repro: reload with a cached list and a slow API, focus a row's Add, press Enter, then wait for the live response. Focus ends on `<body>`. The basket state itself is kept. This affects screen-reader and keyboard users. Fix: before `list.replaceChildren`, remember the focused element's row id and testid, then re-focus the matching control afterwards.
+
+**F4, S4: pruning against a stale cached list can silently drop an item that the live list still has.** Repro: the catalogue cache write fails (quota exceeded) while the basket write succeeds. The user adds an item that the live list has but the old cache lacks, then reloads. The cached list prunes the item, and the result is written back: the basket ends empty and the bar is gone. In normal use the cache always equals the last live list, so this needs a failed cache write. Fix: on a cached render, prune for display only and write back only after a live response.
+
+**F5, spec note for the PM (no defect): the stepper limit is the free units, not the quantity.** The acceptance criterion says "stepper up to the quantity". The code and the pinned tests use free units, and nothing is free means exactly 1 (join the waiting list). So a quantity-3 item with 1 free shows Add, not a stepper, and a buyer can queue for only one unit of a fully taken multi-unit item. The code comment explains why (D-004, the smaller reading). The PM should confirm this with the seller.
+
+**F6, note: `Reserve (n)` links to `#/reserve`, which does nothing until S-10.** This is harmless while no API sends `reserving: true`. If S-11 deploys the flag before S-10 merges, staging will show a dead Reserve button.
+
+### Coverage gaps (no test would go red)
+- The refusal message clearing after a successful change: the spec header says it is not required.
+- The last-row clearance while the message shows (F1).
+- Non-reserving mode leaving the stored basket intact (checked here by hand only).
+- The item-limit message text: reachable only in unit terms, since the stepper's + is disabled at the item maximum.
+- Focus behaviour (F2, F3). No CLS test for reserving mode, and the existing CLS tests skip on WebKit.
+
+### Manual checks still needed (real device)
+- iPhone with a home indicator, Safari: the bar sits above the home indicator, with the safe-area padding visible, and does not jump when the Safari toolbar collapses on scroll. Landscape: with `viewport-fit=cover` now on in all modes, no text goes under the notch. Check R1 mode too, because the meta tag is unconditional.
+- Android Chrome: the bar stays put when the address bar hides on scroll.
+- VoiceOver and TalkBack: the stepper count is announced on change, the refusal alert is announced, and "Added ✓" reads sensibly.
+- Larger system text (accessibility sizes): bar height against F1.
+
+### Not examined
+- The real staging or live API (no `reserving` flag exists yet; S-11 adds it).
+- Two tabs editing the basket at once (storage events are not handled; the last write wins).
+- Behaviour after navigating to `#/reserve` (S-10).
+- Photos in reserving mode beyond the e2e manifest fixture.
+
+**Screenshot:** `docs/qa/screenshots/S-09-basket-390.png` (iPhone 14 profile, Chromium, synthetic items, Reserve (4)).
