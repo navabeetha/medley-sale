@@ -13,7 +13,8 @@
 //     return value is JSON.stringify'd as the answer.
 //   - action "booking" (S-12) and "backOut" (S-14): the same, through deps.booking and deps.backOut. The PARSED OBJECT
 //     (token, claimId) comes from the POST BODY only: handlePost has no query-string input, and doGet never routes them.
-//   - any other action (including waOpened until S-13 lands): {"error":"unknown action"}, never echoed back.
+//   - action "waOpened" (S-13): the same, through deps.waOpened (required since the S-13 fixes).
+//   - any other action: {"error":"unknown action"}, never echoed back.
 //   - missing, empty, non-JSON, or non-object body: {"error":"bad request"}.
 //   - if the handler for the action throws (reserve, booking or backOut): {"error":"unavailable"}, generic on purpose, so an
 //     exception message that holds a name or number can never leave (D-030 rule 8).
@@ -29,8 +30,8 @@ import { describe, expect, it } from "vitest";
 import { handleGet } from "../../src/api/handle-get";
 import { handlePost, type PostDeps } from "../../src/api/handle-post";
 
-/** All handlers present (S-12 / S-14 made booking and backOut required); a test overrides the one it cares about. */
-const deps = (over: Partial<PostDeps> = {}): PostDeps => ({ reserve: () => ({}), booking: () => ({}), backOut: () => ({}), ...over });
+/** All handlers present (S-12 / S-14 made booking and backOut required, S-13 waOpened); a test overrides the one it cares about. */
+const deps = (over: Partial<PostDeps> = {}): PostDeps => ({ reserve: () => ({}), booking: () => ({}), backOut: () => ({}), waOpened: () => ({}), ...over });
 
 describe("handlePost", () => {
   it("passes a parsed reserve request to the reserve handler and returns its answer as JSON", () => {
@@ -43,10 +44,10 @@ describe("handlePost", () => {
   });
 
   it.each([
-    ["waOpened"], ["Booking"], [" backOut"], ["BACKOUT"], ["back-out"], ["catalogue"], ["RESERVE"], [" reserve"], [""],
+    ["waopened"], ["WaOpened"], ["Booking"], [" backOut"], ["BACKOUT"], ["back-out"], ["catalogue"], ["RESERVE"], [" reserve"], [""],
   ])("answers unknown action %j with an error and does not call reserve", (action) => {
     let called = 0;
-    const out = handlePost(JSON.stringify({ action }), deps({ reserve: () => { called++; return {}; }, booking: () => { called++; return {}; }, backOut: () => { called++; return {}; } }));
+    const out = handlePost(JSON.stringify({ action }), deps({ reserve: () => { called++; return {}; }, booking: () => { called++; return {}; }, backOut: () => { called++; return {}; }, waOpened: () => { called++; return {}; } }));
     expect(JSON.parse(out)).toEqual({ error: "unknown action" });
     expect(called).toBe(0);
   });
@@ -66,7 +67,7 @@ describe("handlePost", () => {
     ["a JSON number", "7"],
   ])("answers a bad body (%s) with a bad request error, without throwing", (_label, body) => {
     let called = 0;
-    const out = handlePost(body, deps({ reserve: () => { called++; return {}; }, booking: () => { called++; return {}; }, backOut: () => { called++; return {}; } }));
+    const out = handlePost(body, deps({ reserve: () => { called++; return {}; }, booking: () => { called++; return {}; }, backOut: () => { called++; return {}; }, waOpened: () => { called++; return {}; } }));
     expect(JSON.parse(out)).toEqual({ error: "bad request" });
     expect(called).toBe(0);
   });

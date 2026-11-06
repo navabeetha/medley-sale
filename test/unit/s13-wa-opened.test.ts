@@ -18,6 +18,7 @@
 //   The module is loaded with a dynamic import so this file type-checks before it exists.
 import { describe, expect, it } from "vitest";
 import { handlePost, type PostDeps } from "../../src/api/handle-post";
+import { CATALOGUE_CACHE_KEY } from "../../src/api/handle-get";
 import { NOW, STAMP, build, harness, tokenOf } from "../fixtures/queue-sheet";
 import type { FakeTab } from "../fixtures/fake-sheet";
 
@@ -126,5 +127,28 @@ describe("waOpened refuses what it cannot place, the same way each time", () => 
     const h = harness(ss);
     expect(await run(h.ss, { token: tokenOf(1) }, h.deps)).toEqual({ ok: false, error: "not-reserving" });
     expect(h.events).not.toContain("waitLock");
+  });
+});
+
+describe("waOpened does not touch the catalogue cache", () => {
+  // A Bookings stamp cannot change what the catalogue shows, so clearing the cache would only cost a cold catalogue rebuild
+  // per WhatsApp handoff (QA flag b). The write itself still happens, flushed and under the lock.
+  const cacheClears = (h: ReturnType<typeof harness>) => h.events.filter((e) => e === `cache:${CATALOGUE_CACHE_KEY}`).length;
+
+  it("a first stamp writes the cell but clears no cache entry", async () => {
+    const h = harness(build(SEED));
+    await run(h.ss, { token: tokenOf(1) }, h.deps);
+    expect(openedOf(h, 1)).toBe(NOW); // the premise: a write really happened
+    expect(cacheClears(h)).toBe(0);
+  });
+
+  it("a repeat, a miss and a busy answer clear none either", async () => {
+    const h = harness(build(SEED));
+    await run(h.ss, { token: tokenOf(1) }, h.deps);
+    h.events.length = 0; // the first stamp is covered above; only what follows is counted here
+    await run(h.ss, { token: tokenOf(1) }, h.deps);
+    await run(h.ss, { token: "tok-9999" }, h.deps);
+    await run(h.ss, { token: tokenOf(1) }, { ...h.deps, lock: { waitLock: () => { throw new Error("t"); }, releaseLock: () => {} } });
+    expect(cacheClears(h)).toBe(0);
   });
 });
