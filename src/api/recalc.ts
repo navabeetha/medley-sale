@@ -6,7 +6,7 @@
 // previousRole is its CURRENT role: holders keep their stamp, nobody new is stamped, and a claim that
 // is no longer a holder loses its stamp (6.1 rule 3). The cost, accepted in D-039, is that a promotion
 // whose edit was missed gets no Promoted at and so no To do row.
-import { CLAIMS, applyItem, locked, readClaims, readItems, readTokens, rolesOf, toInput, type SellerDeps } from "./seller-sheet";
+import { CLAIMS, locked, repairAll, type SellerDeps } from "./seller-sheet";
 import type { Spreadsheet } from "./sheet";
 
 export type RecalcOutcome = { ok: true } | { ok: false; error: "busy" | "not-reserving" };
@@ -14,15 +14,6 @@ export type RecalcOutcome = { ok: true } | { ok: false; error: "busy" | "not-res
 export function recalculateAll(ss: Spreadsheet, deps: SellerDeps): RecalcOutcome {
   const claimsTab = ss.getTab(CLAIMS);
   if (!claimsTab) return { ok: false, error: "not-reserving" }; // status mode (D-038.6): no lock, nothing to do
-  const out = locked(ss, deps, (markWrote) => {
-    const sheet = readClaims(claimsTab);
-    const items = readItems(ss);
-    const tokens = readTokens(ss);
-    const now = deps.now();
-    for (const item of items.values()) {
-      const own = sheet.rows.filter((c) => c.itemId === item.id);
-      applyItem({ ss, claims: sheet, deps, now, markWrote }, item, rolesOf(item, own.map((c) => toInput(c, null)), now), tokens, null);
-    }
-  });
+  const out = locked(ss, deps, (markWrote) => repairAll(ss, claimsTab, deps, markWrote));
   return out.busy ? { ok: false, error: "busy" } : { ok: true };
 }

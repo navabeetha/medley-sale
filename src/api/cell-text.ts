@@ -15,3 +15,10 @@ export const unguard = (s: string): string => (/^'[=+\-@]/.test(s) ? s.slice(1) 
  * the fake keeps it, so readers accept both.
  */
 export const unapostrophe = (s: string): string => (s.startsWith("'") ? s.slice(1) : s);
+/**
+ * A Number cell as text. Sheets re-types a typed "+919000000012" as the number 919000000012 and drops
+ * the "+" (S-15 QA F4), so a numeric cell of exactly 12 digits starting 91 is read as "+91...". Every
+ * other cell reads as `text`; normalisePhone is deliberately unchanged for text.
+ */
+export const numberText = (v: CellValue | undefined): string | null =>
+  typeof v === "number" && Number.isInteger(v) && /^91\d{10}$/.test(String(v)) ? `+${v}` : text(v);

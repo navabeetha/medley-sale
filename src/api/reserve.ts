@@ -12,7 +12,7 @@ import { CATALOGUE_CACHE_KEY } from "./handle-get";
 import { findHeaderRow } from "./header-row";
 import { colOf, guardText, hex, itemNameCol } from "./migrate";
 import type { CellValue, Spreadsheet, Tab } from "./sheet";
-import { text, unapostrophe, unguard } from "./cell-text";
+import { numberText, text, unapostrophe, unguard } from "./cell-text";
 import { cleanSiteUrl } from "./site-url";
 import { buildMessage, type MessageUnit } from "../domain/message";
 import { normalisePhone } from "../domain/phone";
@@ -118,8 +118,8 @@ interface ItemInfo {
 }
 
 /** True when a stored cell holds `value` (once its apostrophe, if any, is removed). */
-const sameText = (cell: CellValue | undefined, value: string): boolean => {
-  const c = text(cell);
+const sameText = (cell: CellValue | undefined, value: string, read: (v: CellValue | undefined) => string | null = text): boolean => {
+  const c = read(cell);
   return c !== null && unapostrophe(c) === value;
 };
 /** Is the honeypot field filled in? `0`, false, null, "" and absent are not (QA F8: autofill must not lose a real booking). */
@@ -186,7 +186,7 @@ function readClaims(tab: Tab): { head: CellValue[]; rows: ClaimRow[]; maxClaimId
     rows.push({
       row: i + 2, claimId, itemId, state,
       bookingId: text(at(r, "Booking ID")),
-      number: text(at(r, "Number")),
+      number: numberText(at(r, "Number")), // F4: a numeric cell is +91...
       promotedAt: promoted instanceof Date ? promoted.toISOString() : text(promoted),
     });
   });
@@ -302,7 +302,7 @@ function reserveLocked(
   if (previous) {
     const prev = (h: string): CellValue | undefined => previous[colOf(bookingHead, h) - 1];
     // QA F4: only the number that made the booking may replay it. Never reveal its token otherwise.
-    if (!sameText(prev("Number"), req.number)) return fail("invalid-request");
+    if (!sameText(prev("Number"), req.number, numberText)) return fail("invalid-request");
     const prevId = Number(prev("Booking ID"));
     // R1: orphaned only when NO raw row carries the id; a row with an odd State still counts as saved.
     if (rawBookingIds.has(prevId)) {

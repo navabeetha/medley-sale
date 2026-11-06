@@ -8,7 +8,7 @@
 // Claims are found by Claim ID and columns by header name, never by position (risk 10.3, 4.1).
 import { CATALOGUE_CACHE_KEY } from "./handle-get";
 import { findHeaderRow } from "./header-row";
-import { text, unapostrophe, unguard } from "./cell-text";
+import { numberText, text, unapostrophe, unguard } from "./cell-text";
 import { colOf, guardText, isBlank, itemNameCol } from "./migrate";
 import type { CellValue, Spreadsheet, Tab } from "./sheet";
 import { cleanSiteUrl } from "./site-url";
@@ -29,6 +29,8 @@ export interface SellerDeps {
 }
 
 export const CLAIMS = "Claims";
+/** The note on a State cell that holds something else (S-15 QA F3). Only this exact text is ever cleared as ours. */
+export const NOT_A_STATE = "Not a valid state — choose active, released or sold";
 const BOOKINGS = "Bookings";
 /** A trigger may wait for a reserve in progress; under the lock the work takes well under a second. */
 const LOCK_WAIT_MS = 30_000;
@@ -117,7 +119,7 @@ export function readClaims(tab: Tab): ClaimsSheet {
       row: i + 2, claimId, itemId, state,
       bookingId: booking === null || !Number.isFinite(Number(booking)) ? null : Number(booking),
       name: unguard(text(at("Name")) ?? ""),
-      number: text(at("Number")),
+      number: numberText(at("Number")), // F4: a numeric cell is +91...
       promotedAt: promoted instanceof Date ? promoted.toISOString() : text(promoted),
       notified: at("Notified"), soldPrice: at("Sold price"), soldAt: at("Sold at"), link: at("Message link"),
     });
@@ -294,4 +296,43 @@ export function applyItem(sh: Shared, item: ItemRow, previousRoles: Map<number, 
     .map((c) => c.name)
     .filter((n) => n !== "");
   put(item.tab, item.row, item.personCol, item.currentPerson, people.length ? guardText(people.join(", ")) : null, markWrote);
+}
+
+// ---- Typo'd State cells (QA F3)
+
+/**
+ * Keeps NOT_A_STATE notes true: set on every non-blank State that is not active / released / sold on a
+ * row with a Claim ID (readClaims drops those rows, so this reads the RAW grid), cleared where the cell
+ * has become valid. Any other note is left alone, and a cell already right is not written (stable runs).
+ */
+export function syncStateNotes(tab: Tab, markWrote: () => void): void {
+  const grid = tab.getGrid();
+  const head = grid[0] ?? [];
+  const idCol = colOf(head, "Claim ID"), stateCol = colOf(head, "State");
+  if (!idCol || !stateCol) return;
+  grid.slice(1).forEach((r, i) => {
+    const row = i + 2;
+    const state = text(r[stateCol - 1]);
+    const typo = state !== null && state !== "active" && state !== "released" && state !== "sold" && text(r[idCol - 1]) !== null;
+    const note = tab.getNote(row, stateCol);
+    if (typo && note !== NOT_A_STATE) { markWrote(); tab.setNote(row, stateCol, NOT_A_STATE); }
+    else if (!typo && note === NOT_A_STATE) { markWrote(); tab.setNote(row, stateCol, ""); } // fixed or emptied
+  });
+}
+
+/**
+ * The timed repair's body, under a lock the caller holds (D-039): every item recalculated with each
+ * claim's previous role = its current role, so nobody new is stamped. Shared by recalculateAll and by
+ * an edit whose row no longer holds the edited claim (QA F2).
+ */
+export function repairAll(ss: Spreadsheet, claimsTab: Tab, deps: SellerDeps, markWrote: () => void): void {
+  syncStateNotes(claimsTab, markWrote);
+  const sheet = readClaims(claimsTab);
+  const items = readItems(ss);
+  const tokens = readTokens(ss);
+  const now = deps.now();
+  for (const item of items.values()) {
+    const own = sheet.rows.filter((c) => c.itemId === item.id);
+    applyItem({ ss, claims: sheet, deps, now, markWrote }, item, rolesOf(item, own.map((c) => toInput(c, null)), now), tokens, null);
+  }
 }

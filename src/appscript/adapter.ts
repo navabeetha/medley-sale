@@ -24,7 +24,19 @@ class SheetTab implements Tab {
     // One setValues call, so the rows land together or not at all. Rows must be the same width.
     const width = Math.max(...rows.map((r) => r.length));
     const padded = rows.map((r) => [...r, ...new Array<CellValue>(width - r.length).fill(null)]);
-    this.sheet.getRange(this.sheet.getLastRow() + 1, 1, padded.length, width).setValues(padded);
+    const first = this.sheet.getLastRow() + 1;
+    // S-15 QA: setValues past the last row of the grid fails or lands outside the sheet, so add the rows
+    // we need first. (G1 live check: book enough items to run Claims past its last row.)
+    const missing = first + padded.length - 1 - this.sheet.getMaxRows();
+    if (missing > 0) this.sheet.insertRowsAfter(this.sheet.getMaxRows(), missing);
+    const target = this.sheet.getRange(first, 1, padded.length, width);
+    // S-15 QA: new rows must carry the same dropdowns as the rest of the tab (the State column's
+    // data validation), so copy only the validation of row 2 onto them. (G1 live check: the State
+    // dropdown appears on a freshly booked Claims row.) Skipped on a tab with no data row to copy.
+    if (first > 2) {
+      this.sheet.getRange(2, 1, 1, width).copyTo(target, SpreadsheetApp.CopyPasteType.PASTE_DATA_VALIDATION, false);
+    }
+    target.setValues(padded);
   }
   /** Whole tab, not just the data range. Notes only: Apps Script has no API for threaded comments. */
   private fullRange(): GoogleAppsScript.Spreadsheet.Range {
@@ -34,6 +46,9 @@ class SheetTab implements Tab {
     const range = this.sheet.getRange(row, col);
     if (text === "") range.clearNote();
     else range.setNote(text);
+  }
+  getNote(row: number, col: number): string | null {
+    return this.sheet.getRange(row, col).getNote() || null;
   }
   getComments(): { row: number; col: number }[] {
     const out: { row: number; col: number }[] = [];
