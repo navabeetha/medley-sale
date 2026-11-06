@@ -7,6 +7,8 @@ export class FakeTab implements Tab {
   validations = new Map<number, string[]>();
   formulas: { row: number; col: number; formula: string }[] = [];
   links: { row: number; col: number; url: string }[] = [];
+  /** Cell notes written through setNote (S-15: the explanation for a reverted edit). Separate from `comments`, which the scrub counts. */
+  notes: { row: number; col: number; text: string }[] = [];
   /** Every string written through setCell/appendRow, for the 6.3 guard checks. */
   writtenStrings: string[] = [];
 
@@ -36,6 +38,14 @@ export class FakeTab implements Tab {
       this.grid.push([...values]);
       for (const v of values) if (typeof v === "string") this.writtenStrings.push(v);
     }
+  }
+  /** Attach a plain-text note to a cell (replacing any earlier one); an empty string removes it. Notes are never evaluated as formulas. */
+  setNote(row: number, col: number, text: string): void {
+    this.notes = this.notes.filter((n) => !(n.row === row && n.col === col));
+    if (text !== "") this.notes.push({ row, col, text });
+  }
+  getNote(row: number, col: number): string | null {
+    return this.notes.find((n) => n.row === row && n.col === col)?.text ?? null;
   }
   getComments() {
     return this.comments.map((c) => ({ ...c }));
@@ -110,6 +120,7 @@ export class FakeSpreadsheet implements Spreadsheet {
         validations: [...t.validations.entries()],
         formulas: t.formulas,
         links: t.links,
+        notes: t.notes,
       })),
     });
   }

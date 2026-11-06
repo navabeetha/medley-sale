@@ -1304,3 +1304,80 @@ describe("reserve: coverage gaps found by QA's mutation check", () => {
     expect(section(r, "Reserved for me:")[0]).not.toContain("'-Retro lamp");
   });
 });
+
+// ---- Carried bugfixes from the S-11 QA re-check (S-15 story file, "Bugfix tickets carried from S-11")
+
+describe("reserve: R1 a booking is orphaned only when NO raw Claims row carries its Booking ID, whatever the State", () => {
+  const KEY = "r1-retry-key-0000001";
+  const THREE = [{ id: "I-0002", quantity: 3 }];
+  const STATE_COL = 6; // 0-based index of "State" in CLAIM_HEADERS
+
+  // The seller typed over the dropdown, or a paste put a stray space in: the row exists, but its State is not valid.
+  it.each([["Sold "], ["SOLD"], ["bogus"], [""], [null]])(
+    "replays the booking (same token, no new claims, no writes) when all 3 of its claims have the State %j",
+    (state) => {
+      const h = harness();
+      const first = h.ok({ idempotencyKey: KEY, items: THREE });
+      const claims = h.ss.getTab("Claims") as FakeTab;
+      for (const row of [3, 4, 5]) claims.grid[row - 1]![STATE_COL] = state; // row 1 header, row 2 the seeded Kettle claim
+      h.events.length = 0;
+      const again = h.ok({ idempotencyKey: KEY, items: THREE });
+      expect(again.token).toBe(first.token);
+      expect(again.bookingId).toBe(first.bookingId);
+      expect(claimsOf(h.ss)).toHaveLength(4); // nothing re-created: re-creating is the double-booking
+      expect(bookingsOf(h.ss)).toHaveLength(1);
+      expect(h.events).not.toContain("write");
+    },
+  );
+
+  it("still completes a booking whose claims were never written (no row at all with that Booking ID)", () => {
+    const ss = build();
+    seedBooking(ss, { id: 1, token: "orphan-bk-0001", key: KEY });
+    seed(ss, { claimId: 2, itemId: "I-0001", bookingId: "7", state: "sold" }); // someone else's row must not count as ours
+    const r = harness(ss).ok({ idempotencyKey: KEY, items: THREE });
+    expect(r.token).toBe("orphan-bk-0001");
+    expect(claimsOf(ss).filter((c) => c["Booking ID"] === 1)).toHaveLength(3);
+  });
+});
+
+describe("reserve: R2 a throwing flush still releases the lock", () => {
+  it("releases the lock exactly once, after the flush attempt, and still tries to clear the catalogue cache", () => {
+    const h = harness();
+    h.ss.flush = () => { h.events.push("flush"); throw new Error("Service Spreadsheets failed"); };
+    try { h.run(); } catch { /* the failure may surface as a throw; the lock must be freed either way */ }
+    const e = h.events;
+    expect(e.filter((x) => x === "releaseLock")).toHaveLength(1);
+    expect(e.indexOf("flush")).toBeGreaterThan(-1);
+    expect(e.indexOf("flush")).toBeLessThan(e.indexOf("releaseLock"));
+    expect(e).toContain(`cache:${CATALOGUE_CACHE_KEY}`);
+  });
+});
+
+describe("reserve: R3 SITE_URL is trimmed before it is checked", () => {
+  it.each([
+    ["a trailing space and newline", " https://example.invalid/medley-sale/ \n"],
+    ["a leading tab and trailing CR LF", "\thttps://example.invalid/medley-sale\r\n"],
+  ])("accepts SITE_URL with %s, and the private link has no stray whitespace", (_label, siteUrl) => {
+    const h = harness(build(), { siteUrl });
+    const r = h.ok();
+    expect(lines(r).at(-1)).toBe(`Change or back out: https://example.invalid/medley-sale/#/b/${r.token}`);
+  });
+
+  it("still refuses a SITE_URL that is only whitespace", () => {
+    expect(harness(build(), { siteUrl: " \n " }).run()).toEqual({ ok: false, error: "not-configured" });
+  });
+});
+
+describe("reserve: SITE_URL with userinfo is not configured (a surviving mutant in the QA mutation check)", () => {
+  it.each([
+    ["a user name", ["https://seller", "example.invalid/medley-sale"].join("@")],
+    ["a user name and a password", ["https://seller:pw", "example.invalid/"].join("@")],
+    ["an empty user name", "https://@example.invalid/"],
+  ])("answers not-configured, before the lock and writing nothing, for %s", (_label, siteUrl) => {
+    const h = harness(build(), { siteUrl });
+    const before = h.ss.snapshot();
+    expect(h.run()).toEqual({ ok: false, error: "not-configured" });
+    expect(h.events).toEqual([]);
+    expect(h.ss.snapshot()).toBe(before);
+  });
+});

@@ -19,11 +19,14 @@ beforeAll(() => {
 }, 60_000);
 
 describe("Apps Script bundle", () => {
-  it("has exactly these top-level functions: scrubStaging, migrateSheet, addIdColumns, warmCatalogue, doGet, doPost", () => {
+  it("has exactly these top-level functions: scrubStaging, migrateSheet, addIdColumns, warmCatalogue, doGet, doPost, onClaimsEdit, recalculateAll", () => {
     // Column 0 only: the esbuild IIFE indents everything inside it.
     const names = [...code.matchAll(/^function\s+([A-Za-z_$][\w$]*)\s*\(/gm)].map((m) => m[1]);
     // S-11 adds doPost (brief 4.3: POST entry, body as text/plain JSON).
-    expect(names.sort()).toEqual(["addIdColumns", "doGet", "doPost", "migrateSheet", "scrubStaging", "warmCatalogue"]);
+    // S-15 adds onClaimsEdit(e), the handler the seller installs as an on-edit trigger (Triggers screen), and
+    // recalculateAll(), the target of the 10-minute time-driven trigger. Neither is named onEdit: that name would also
+    // run as a restricted simple trigger and fire twice. No trigger-installing function: ScriptApp would need a wider scope.
+    expect(names.sort()).toEqual(["addIdColumns", "doGet", "doPost", "migrateSheet", "onClaimsEdit", "recalculateAll", "scrubStaging", "warmCatalogue"]);
   });
 
   it("has no other top-level function-like declarations (var/let/const function, class, async)", () => {
