@@ -28,3 +28,18 @@ Nothing, unless an S1 is found (then the PM explains it to her and asks how to p
 ## Out of scope
 
 A real-device test matrix (not planned).
+
+
+## Carried S4 notes (PM, 2026-11-06)
+
+From the S-12/S-14 UI QA:
+- Cancel stays active while a back-out is pending. Disable it.
+- Focus drops to the page body during and after a back-out. Move focus to the unit's status.
+- In browse-only (R1) mode, `#/b/<token>` shows a try-again error that can never succeed. Show the catalogue or a plain "reserving isn't open" message instead.
+- At 320 px the `.wa` button text touches the button edges. Add side padding.
+- Test gaps:
+  - Nothing tests `noreferrer` on the wa.me links, or `preventScroll`.
+  - The `backOutReply` mock answers `whatsappUrl: null`, but the real API returns the updated URL.
+
+From the S-13 QA:
+- Two refusal suffixes with different wording stay on a State note until the next accepted edit. Strip them in a loop.
