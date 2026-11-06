@@ -105,3 +105,17 @@ export function canMarkSold(
   }
   return { ok: true };
 }
+
+/**
+ * The wording of canMarkSold's refusals, as patterns because the numbers in them vary. It lives beside the
+ * reasons so a rewording is made in one file; the seller-sheet uses it to know which State notes are ours (S-13 Q4).
+ * The test that runs every reason through this fails if the two drift apart.
+ */
+const REFUSAL_REASONS = [
+  /^That reservation could not be found for this item\.$/,
+  /^Only an active reservation can be marked sold \(this one is \w+\)\.$/,
+  /^This item's quantity isn't a whole number\. Fix the Quantity cell first\.$/,
+  /^This item has no units to sell\. Set a quantity first\.$/,
+  /^All \d+ units? (?:is|are) already sold\. Undo another sale first\.$/,
+];
+export const isRefusalReason = (note: string): boolean => REFUSAL_REASONS.some((p) => p.test(note));

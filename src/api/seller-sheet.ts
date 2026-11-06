@@ -15,7 +15,7 @@ import { cleanSiteUrl } from "./site-url";
 import { itemStatus } from "../domain/item-status";
 import { buildSellerMessage, type MessageUnit } from "../domain/message";
 import { normalisePhone } from "../domain/phone";
-import { recalculate, type ClaimInput, type ClaimResult, type ClaimRole, type ClaimState } from "../domain/queue";
+import { isRefusalReason, recalculate, type ClaimInput, type ClaimResult, type ClaimRole, type ClaimState } from "../domain/queue";
 
 export interface SellerDeps {
   /** Shape of Apps Script's ScriptLock. */
@@ -33,21 +33,11 @@ export const CLAIMS = "Claims";
 export const NOT_A_STATE = "Not a valid state — choose active, released or sold";
 /** S-14 F8: the note on a State cell that is empty on a row with a Claim ID. A different problem from a typo, so different words. */
 export const BLANK_STATE = "This State cell is empty — choose active, released or sold";
-/**
- * S-14 F10: the wording of canMarkSold's refusals (src/domain/queue.ts), which on-edit leaves in a note when it puts a
- * sale back. Kept here as patterns, because the numbers in them vary. If queue.ts rewords a reason, update this list
- * (the F10 test for a refused oversell fails if they drift apart).
- */
-const REFUSAL_NOTES = [
-  /^That reservation could not be found for this item\.$/,
-  /^Only an active reservation can be marked sold \(this one is \w+\)\.$/,
-  /^This item's quantity isn't a whole number\. Fix the Quantity cell first\.$/,
-  /^This item has no units to sell\. Set a quantity first\.$/,
-  /^All \d+ units? (?:is|are) already sold\. Undo another sale first\.$/,
-];
 /** Notes WE write on a State cell and may therefore remove on an accepted edit; anything else is the seller's own. */
 export const isOurStateNote = (note: string | null): boolean =>
-  note !== null && (note === NOT_A_STATE || note === BLANK_STATE || REFUSAL_NOTES.some((p) => p.test(note)));
+  note !== null && (note === NOT_A_STATE || note === BLANK_STATE || isRefusalReason(note));
+/** S-13 Q1: our note goes only where the cell has no note or one of ours; the seller's own words are never replaced. */
+export const canWriteStateNote = (note: string | null): boolean => note === null || note === "" || isOurStateNote(note);
 const BOOKINGS = "Bookings";
 /** A trigger may wait for a reserve in progress; under the lock the work takes well under a second. */
 const LOCK_WAIT_MS = 30_000;
@@ -60,7 +50,7 @@ const LOCK_WAIT_MS = 30_000;
  * the cache. The release is in its own outer finally (R2): a throwing flush must not leave the lock held.
  */
 export function locked<T>(
-  ss: Spreadsheet, deps: SellerDeps, work: (markWrote: () => void) => T,
+  ss: Spreadsheet, deps: SellerDeps, work: (markWrote: () => void) => T, clearCache = true,
 ): { busy: true } | { busy: false; value: T } {
   try {
     deps.lock.waitLock(LOCK_WAIT_MS);
@@ -76,7 +66,7 @@ export function locked<T>(
         try {
           ss.flush(); // commit while we still hold the lock, or the next reader sees stale Claims (QA F2)
         } finally {
-          try { deps.cache.remove(CATALOGUE_CACHE_KEY); } catch { /* the sheet is saved; a stale cache expires on its own */ }
+          try { if (clearCache) deps.cache.remove(CATALOGUE_CACHE_KEY); } catch { /* the sheet is saved; a stale cache expires on its own */ }
         }
       }
     } finally {
@@ -337,7 +327,7 @@ export function syncStateNotes(tab: Tab, markWrote: () => void): void {
     const valid = state === "active" || state === "released" || state === "sold";
     const want = !hasId || valid ? null : state === null ? BLANK_STATE : NOT_A_STATE;
     const note = notes[row - 1] ?? null;
-    if (want !== null && note !== want) { markWrote(); tab.setNote(row, stateCol, want); }
+    if (want !== null && note !== want && canWriteStateNote(note)) { markWrote(); tab.setNote(row, stateCol, want); }
     else if (want === null && (note === NOT_A_STATE || note === BLANK_STATE)) { markWrote(); tab.setNote(row, stateCol, ""); } // fixed, or no longer a claim row
   });
 }
