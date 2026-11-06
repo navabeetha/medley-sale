@@ -30,7 +30,7 @@ function ordinal(n: number): string {
 }
 
 /** "Air purifier (Philips)": brand in parentheses after the name (S-13 seller note). Books: "Name by Author". */
-function title(u: MessageUnit): string {
+export function title(u: MessageUnit): string {
   if (!u.detail) return u.name;
   return u.isBook ? `${u.name} by ${u.detail}` : `${u.name} (${u.detail})`;
 }

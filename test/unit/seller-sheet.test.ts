@@ -913,9 +913,10 @@ describe("onClaimsEdit: an oldValue that is missing or not a valid State (QA F1)
     expect(claimRow(h.ss, 1)["Sold at"]).toBe(STAMP); // the earlier sale is untouched
   });
 
-  it("a missing oldValue on a sale that fits leaves no note, and removes an older one", () => {
+  it("a missing oldValue on a sale that fits leaves no note, and removes an older one of ours (S-14 F10: only our own wording is removed)", () => {
     const h = harness(build(QUEUE));
-    claimsTab(h.ss).setNote(rowOfClaim(h.ss, 1), STATE_COL, "old refusal");
+    // A real earlier refusal reason (queue.ts canMarkSold wording), not arbitrary text: arbitrary notes are the seller's.
+    claimsTab(h.ss).setNote(rowOfClaim(h.ss, 1), STATE_COL, "All 1 unit is already sold. Undo another sale first.");
     h.edit(1, "sold", { oldValue: null });
     expect(noteOf(h.ss, 1)).toBeNull();
   });

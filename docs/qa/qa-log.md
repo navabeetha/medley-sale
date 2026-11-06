@@ -1632,3 +1632,86 @@ Scope: the installable on-edit handler (`onClaimsEdit`), the 10-minute repair (`
 9. A `+91…` number typed without spaces in Number gets a link.
 
 **Verdict (re-check): SIGN-OFF.** F1–F5 are fixed and pinned. F7 and F8 are S3s for the PM, best done before the G1 gate (F7 at least measured). F9 and F10 are S4s.
+
+## 2026-11-06: S-12/S-14 API (branch S-12-14-api; commits ef6c699, 66c538c, e4f76ba red; e02a52b, 497622a, 674f7bc green; a862b90 PM test fix), QA
+
+**Scope:** the booking API (S-12, `src/api/booking.ts`), the back-out API (S-14, `src/api/back-out.ts`), the `booking` and `backOut` routes in `handlePost` and `doPost`, and the carried S-15 fixes F7–F10 (`seller-sheet.ts`, `on-edit.ts`, the adapter's batch `getNotes`, the Claim ID read in `onClaimsEditRun`). API only; there is no UI on this branch.
+
+### Gate (fresh runs; Playwright, `npm test` and `npm run check` not run, by instruction, because another worktree uses the fixed port)
+- `npm run typecheck`: exit 0. `npx eslint .`: exit 0. `npx vitest run`: 41 files, 1305 tests passed.
+- `npm run size`: 5.4 KB of 50 KB gzipped. `node tools/pii-scan.mjs`: 234 files, 0 findings.
+- `npm run build:gas`: built. The bundle is an es2019 IIFE with no import/export. The top-level functions are `scrubStaging`, `migrateSheet`, `addIdColumns`, `warmCatalogue`, `doGet`, `doPost`, `onClaimsEdit` and `recalculateAll`; `booking` and `backOut` sit inside `A44` and are reached through `doPost`. There is no `URL`, `structuredClone`, `.at(`, `replaceAll` or `findLast`. The batch `getNotes` and the Claim ID read made before the lock are both present in the bundle.
+
+### Red then green
+- Each commit was checked in a clean export. At ef6c699, 20 of 29 F7–F10 tests fail. At 66c538c, `booking.test.ts` fails to load because the module is missing. At e4f76ba, `back-out.test.ts` fails to load and 5 routing tests fail. At e02a52b, all but one F-test pass. At 497622a, booking passes. At 674f7bc, back-out and routing pass. The green commits touch no tests.
+- **a862b90 is legitimate.** The test "a typo'd State on a row with no Claim ID gets no note" also counted the setup's own `appendRow` as a handler write. It therefore stayed red from e02a52b through 674f7bc, whatever the implementation did, and was also vacuously red at ef6c699. The fix resets the event log after setup and nothing else. With it, the test is real: mutation M14 below turns it red. Process note: the "green" commits were not fully green until the PM fix.
+
+### Verified (fake sheet, synthetic data, throwaway tests deleted afterwards)
+- **Privacy sweep (4 buyers, 9 claims, every buyer's booking plus each of their back-outs):**
+  - No buyer number appears, not even the caller's own.
+  - No other buyer's name or token appears, and no claim id outside the caller's booking.
+  - The seller's digits appear only inside `https://wa.me/…`.
+  - `tellSellerUrl` carries no token and no site link.
+- **Token guessing (T-11):** case changes, padding, a leading apostrophe, prefixes and suffixes, `*`, `.*`, numbers, arrays and objects all get exactly `{ok:false,error:"not-found"}` from both endpoints, with nothing written. A Token cell holding only `'` never matches `""` or `'`.
+- **Claim guessing:** `"1"`, 1.5, 0, -1, 1e20, NaN, Infinity, null, true, and other buyers' active and sold claims are all `not-found`, with nothing written. Another booking's claim can't be told apart from a missing one.
+- **Promotion:**
+  - A repeated back-out of a holder (later clock) writes nothing and stamps once.
+  - A waiter leaving, then the holder leaving, stamps the right waiter, and Person and the booking view follow.
+  - Back-out, then a sale of the promoted waiter, then a retry of the back-out changes nothing. The remaining waiter sees `itemSold`.
+  - The timed repair after a back-out rewrites nothing on Claims.
+  - A back-out clears the catalogue cache and changes `waitingCount`.
+  - A back-out of a claim whose item row was deleted is released and answers ok, and the "Tell the seller" text falls back to "my reservation".
+- **T-02, T-04 (through `reserve`) and T-05 (both orders, under the shared lock)** are covered by existing tests, which assert invariants (stamps, Person, positions, State) rather than incidental values.
+- **Mutation testing (26 mutants, 22 red):**
+  - Ownership check, sold refusal, roles taken before the write, active guard (idempotency), Ended at, a token in the tell text.
+  - The `mine` filter, the token apostrophe, sold items in the WhatsApp message, position, `itemSold`, the routing swap.
+  - F9 `otherClaim`, the F8 Claim-ID guard, the typo Claim-ID guard, F10 both ways, the F7 per-row read, sync id-less rows, sync clearing of BLANK_STATE, the quantity refusal regex, blank normalisation.
+  - **Survivors:** M5 and M23 (see Q4). M25 (dropping `claimId < 1`) is equivalent. M26 (the adapter returning `""` instead of null) is live-only.
+
+### Findings
+- **Q1 (S3): a blank State or a typo replaces the seller's own note on that cell, and the note is then deleted for good.**
+  - Repro (fake): the seller puts the note "Paid cash, collecting Sunday" on claim 1's State cell, then clears the cell. Both `onClaimsEdit` and the timed `syncStateNotes` replace the note with BLANK_STATE. When she picks `active` again, our note is cleared and her text is gone.
+  - The same happens with a typo and NOT_A_STATE. That case dates from S-15, and F8 adds the more common Delete-key path.
+  - This works against the aim of F10, "a note the seller wrote herself stays". The only recovery is the sheet's version history.
+  - Fix: write our note only where the cell has no note or already has one of ours. Otherwise leave the seller's note, and log or count the bad row. Start with a failing test for both the edit path and the sync path.
+- **Q2 (S4): an accepted seller edit that leads to no write of ours no longer flushes or clears the catalogue cache.**
+  - Before F10, every accepted edit called `setNote("")`, which went through `markWrote`.
+  - Repro (fake): quantity 1, holder plus 2 waiters, with SITE_URL unset or with claims that have no Number (claims from migrate have a blank booking Number). Release the last waiter in the sheet. The events are `waitLock, releaseLock`, the catalogue's `waitingCount` has changed, but the cache is not cleared.
+  - Effect: the public waiting count is stale until `warmCatalogue` (5 min) or the TTL (10 min). With normal staging config (SITE_URL set, numbers present) the Message link write triggers the clear.
+  - Fix: on an accepted edit that changes State, clear the cache (or call `markWrote`) even when nothing else is written. Start with a failing test.
+- **Q3 (S4, accepted as a design choice; PM to confirm): refusal notes never expire on their own.**
+  - Repro: quantity 1, claim 1 sold, claim 2 refused with "All 1 unit is already sold…". The seller undoes claim 1's sale and the timed repair runs. Claim 2 is active and still carries the note.
+  - It describes a past refusal and clears on her next accepted edit of that cell. Harmless but possibly confusing.
+- **Q4 (S4, coverage gaps):**
+  - M5: deleting the `markWrote()` before the State write in `backOut` keeps every test green, because `applyItem` always writes afterwards in the fixtures. A back-out where `applyItem` writes nothing (deleted item row, or a waiter leaving with SITE_URL unset) would then skip flush and the cache clear. Pin it with a test.
+  - M23: removing the "Only an active reservation…" pattern from `isOurStateNote` keeps every test green. That note is the one T-05 produces when the buyer's back-out lands first. Pin it with a test, or better, export the reason wording from `queue.ts` so the regexes can't drift (the drift risk of the duplication).
+  - Not pinned: shape-invalid backOut requests answering without the lock.
+
+### Unforced choices, judged
+- **`isOurStateNote` copying the refusal wording as regexes:** acceptable for now. 4 of 5 patterns are pinned. See Q4 for the fifth and the suggested fix.
+- **The timed repair never clearing refusal notes:** acceptable (Q3).
+- **`backOut` validating shape before the lock:** fine. Nothing about other buyers is revealed, since the answer is identical, and the busy-or-not timing only reflects the caller's own malformed request.
+- **The answer being `booking()` inside the lock after the writes:** correct. The view and the writes are consistent.
+- **A missing item row still releasing but skipping `applyItem`:** fine. The claim is hidden from `booking()` anyway, since it filters to known items.
+- **An accepted edit with no note change no longer flushing and clearing the cache:** see Q2.
+- **The sync clearing our notes on id-less rows:** correct, because such rows are not claims.
+- Also observed: a claim whose State is blank or a typo disappears from the buyer's page, and its back-out answers `not-found`. That is consistent with readClaims, and the F8 note tells the seller. Not a finding.
+
+### Live G1 checks (staging; not done here)
+1. Book from the staging site, then open `#/b/<token>` on a phone. The booking request is a POST with the token in the body only (DevTools on desktop: no token in any URL). A made-up token shows not-found.
+2. Back out of a holder while a waiter exists. The waiter's Claims row gets Promoted at and shows in To do, Status and Person update, and the catalogue's waiting count changes within seconds (cache cleared).
+3. Back out again on the same claim, as a stale page or double tap. The answer is ok and nothing changes in Claims.
+4. "Tell the seller" opens WhatsApp addressed to the seller, with only the buyer's name and item. No link and no number appear in the text.
+5. T-05 by hand: the seller marks sold on her phone while the buyer taps back out. One wins cleanly, and the other gets "not-allowed", or a revert note on the State cell.
+6. The batch `getNotes` on real Sheets (M26): a State cell with no note still counts as no note, and a second `recalculateAll` writes nothing. Time `recalculateAll` on a realistic Claims size, with a reserve during it that does not answer `busy` (F7).
+7. Clear a State cell with Delete from the phone app. The BLANK_STATE note appears. Sort Claims while an edit is pending (F9): it is repaired, with nobody stamped.
+8. The extra Claim ID read in `onClaimsEditRun` does not noticeably slow the trigger.
+
+### Not examined
+- Playwright, `npm run check`, and the real Apps Script runtime (the bundle was checked statically).
+- Torn reads from `booking()` running without the lock while a writer is mid-flush on real Sheets (suspected harmless, since it is read-only and fixes itself on refresh; unconfirmed).
+- The site UI for S-12/S-14 (not on this branch).
+- Response timing as a token oracle (not measurable on the fake).
+
+### Verdict
+**SIGN-OFF** for the API parts of S-12 and S-14 and the carried fixes F7–F10. There is no S1 or S2. Privacy, ownership, uniform not-found, idempotency and promotion under the lock all hold, and the tests constrain them. Q1 (S3) should be fixed before G1, because the seller writes notes in the sheet. Q2 and Q4 go in the same bugfix round, and Q3 needs a PM call.

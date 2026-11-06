@@ -24,6 +24,13 @@
 
 - **From S-11 QA (PM, 2026-11-06):** the WhatsApp URL is now built on the server (`src/domain/message.ts`, used by `src/api/reserve.ts`), so the 2,000-character limit and "…and N more" (6.3) must be enforced there, not in the site. 15 units with long titles currently gives about 2,300 characters. Also confirm whether waiting lines should show a price (2.8 doesn't).
 
+## Bugfix tickets carried from the S-12/S-14 API QA (PM, 2026-11-06); do these first
+
+- **Q1 (S3):** a blanked or typo'd State cell overwrites the seller's own note, and her text is lost. Write our note only where the cell has no note or already has one of ours, on both the edit and the timed paths.
+- **Q2 (S4):** an accepted State change that leads to no write of ours doesn't clear the catalogue cache, so waitingCount can stay stale for minutes. Clear the cache on any accepted State change.
+- **Q4 (S4):** pin `markWrote()` before the State write in backOut (mutant M5); export the refusal-reason wording from `queue.ts` and use it in `isOurStateNote` instead of copied regexes (M23); pin that malformed backOut requests answer without taking the lock.
+- **Q3 accepted (PM):** a refusal note stays until the seller's next successful edit of that cell. It's harmless; no change.
+
 ## References
 
 - Message 2.8 (no seller name. Book name first, then author, 4.1). URL limit 6.3 (under 2,000 characters, "…and N more"). API `waOpened` 4.3.

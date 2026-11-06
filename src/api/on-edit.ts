@@ -7,9 +7,10 @@
 // check and previousRole must use the claims AS THEY WERE BEFORE it. Passing the after-edit state
 // would make every sale look like an oversell and revert it. The grid is authoritative for the new
 // State: it is re-read under the lock, so a second quick edit is never overwritten with a stale one.
-import { claimColumns, CLAIMS, NOT_A_STATE, applyItem, itemInput, locked, readClaims, readItems, readTokens, repairAll, rolesOf, toInput, type SellerDeps } from "./seller-sheet";
+import { claimColumns, CLAIMS, BLANK_STATE, NOT_A_STATE, isOurStateNote, applyItem, itemInput, locked, readClaims, readItems, readTokens, repairAll, rolesOf, toInput, type SellerDeps } from "./seller-sheet";
 import type { CellValue, Spreadsheet } from "./sheet";
-import { isBlank } from "./migrate";
+import { colOf, isBlank } from "./migrate";
+import { text } from "./cell-text";
 import { canMarkSold, type ClaimState } from "../domain/queue";
 
 export interface ClaimsEdit {
@@ -19,6 +20,11 @@ export interface ClaimsEdit {
   column: number;
   oldValue: CellValue;
   newValue: CellValue;
+  /**
+   * F9: the Claim ID on the edited row as the adapter read it when the trigger fired, BEFORE it waited for the lock
+   * (a sort during the wait is the race). Absent: only the State comparison below guards against a sort.
+   */
+  claimId?: number;
 }
 
 export type EditResult =
@@ -40,15 +46,29 @@ export function onClaimsEdit(ss: Spreadsheet, edit: ClaimsEdit, deps: SellerDeps
     // that row may hold another claim, so the grid's State there no longer matches what was typed.
     // Then we can't tell which claim was edited: repair everything exactly as the timed job does
     // (D-039: previous role = current role, so nobody is stamped; the accepted gap).
-    const rawState = claimsTab.getGrid()[edit.row - 1]?.[edit.column - 1];
+    const grid = claimsTab.getGrid();
+    const rawState = grid[edit.row - 1]?.[edit.column - 1];
     const blank = (v: CellValue | undefined): CellValue | null => (isBlank(v) ? null : v!);
-    if (blank(rawState) !== blank(edit.newValue)) {
+    // F9: a sort that leaves the same State word on the row fools the comparison above, so when the adapter sent the
+    // Claim ID it saw, the row must still hold exactly that claim. No Claim ID on the row now counts as different.
+    const idCol = colOf(grid[0] ?? [], "Claim ID");
+    const idNow = text(grid[edit.row - 1]?.[idCol - 1]);
+    const otherClaim = edit.claimId !== undefined && (idNow === null || Number(idNow) !== edit.claimId);
+    if (otherClaim || blank(rawState) !== blank(edit.newValue)) {
       repairAll(ss, claimsTab, deps, markWrote);
       return { handled: true, reverted: false };
     }
-    if (blank(edit.newValue) === null) return { handled: false }; // an emptied cell is not a claim edit
+    if (blank(edit.newValue) === null) {
+      // F8: an emptied cell is not a claim edit, but on a row with a Claim ID it says why the claim has gone quiet.
+      if (idNow !== null && claimsTab.getNote(edit.row, edit.column) !== BLANK_STATE) {
+        markWrote();
+        claimsTab.setNote(edit.row, edit.column, BLANK_STATE);
+      }
+      return { handled: false };
+    }
     // QA F3: a typo'd State (e.g. "Sold ") is not a claim state. Say so on the cell and write nothing else.
     if (!isState(edit.newValue)) {
+      if (idNow === null) return { handled: false }; // a row with no Claim ID is not a claim row: no note
       markWrote();
       claimsTab.setNote(edit.row, edit.column, NOT_A_STATE);
       return { handled: false };
@@ -84,9 +104,15 @@ export function onClaimsEdit(ss: Spreadsheet, edit: ClaimsEdit, deps: SellerDeps
         note = verdict.reason;
       }
     }
-    // An accepted edit removes the explanation left by an earlier refusal or typo.
-    markWrote();
-    claimsTab.setNote(edit.row, edit.column, note);
+    // An accepted edit removes the explanation left by an earlier refusal, typo or blank, but only OURS (F10):
+    // a note the seller wrote herself stays.
+    if (note !== "") {
+      markWrote();
+      claimsTab.setNote(edit.row, edit.column, note);
+    } else if (isOurStateNote(claimsTab.getNote(edit.row, edit.column))) {
+      markWrote();
+      claimsTab.setNote(edit.row, edit.column, "");
+    }
 
     const previousRoles = rolesOf(item, oldKnown ? before : own.map((c) => toInput(c, null)), deps.now());
     const leftSold = oldKnown && edit.oldValue === "sold" && edited.state !== "sold" ? edited.claimId : null;

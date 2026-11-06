@@ -2,10 +2,12 @@
 // in src/api/migrate.ts. Logs counts only, never names, numbers or tokens.
 
 import { addIdColumns } from "../api/add-id-columns";
+import { backOut } from "../api/back-out";
+import { booking } from "../api/booking";
 import { catalogue } from "../api/catalogue";
 import { CATALOGUE_CACHE_KEY, handleGet } from "../api/handle-get";
 import { handlePost } from "../api/handle-post";
-import { migrate, scrubStaging } from "../api/migrate";
+import { colOf, migrate, scrubStaging } from "../api/migrate";
 import { onClaimsEdit, type ClaimsEdit } from "../api/on-edit";
 import { uuidsToBytes } from "../api/random";
 import { recalculateAll } from "../api/recalc";
@@ -111,6 +113,18 @@ export function doPostRun(e?: { postData?: { contents?: string } }): GoogleAppsS
         sellerWhatsapp: props.getProperty("SELLER_WHATSAPP") ?? undefined,
         siteUrl: props.getProperty("SITE_URL") ?? "",
       }),
+    // S-12: read-only, so no lock and no cache. S-14: same lock, cache and clock as reserve.
+    booking: (request) =>
+      booking(activeSpreadsheet(), request, {
+        now: () => new Date().toISOString(),
+        sellerWhatsapp: props.getProperty("SELLER_WHATSAPP") ?? undefined,
+        siteUrl: props.getProperty("SITE_URL") ?? "",
+      }),
+    backOut: (request) =>
+      backOut(activeSpreadsheet(), request, {
+        ...sellerDeps(),
+        sellerWhatsapp: props.getProperty("SELLER_WHATSAPP") ?? undefined,
+      }),
   });
   return ContentService.createTextOutput(body).setMimeType(ContentService.MimeType.JSON);
 }
@@ -147,6 +161,16 @@ export function onClaimsEditRun(e?: EditEvent): void {
     if (range.getSheet().getName() === "Claims") console.log(`multi-cell edit: recalculateAll ${JSON.stringify(recalculateAll(activeSpreadsheet(), sellerDeps()))}`);
     return;
   }
+  // F9: the edited row's Claim ID, read NOW, before onClaimsEdit waits for the lock. A sort during that wait moves
+  // claims between rows; the handler compares this with what the row holds once it has the lock.
+  const sheet = range.getSheet();
+  let claimId: number | undefined;
+  if (sheet.getName() === "Claims" && range.getRow() >= 2) {
+    const head = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0] ?? [];
+    const idCol = colOf(head as never, "Claim ID");
+    const seen = idCol ? sheet.getRange(range.getRow(), idCol).getValue() : "";
+    if (seen !== "" && Number.isFinite(Number(seen))) claimId = Number(seen); // none seen: the State comparison is the only check
+  }
   const edit: ClaimsEdit = {
     tab: range.getSheet().getName(),
     row: range.getRow(),
@@ -154,6 +178,7 @@ export function onClaimsEditRun(e?: EditEvent): void {
     // The event gives strings (and undefined for a cleared or previously empty cell).
     oldValue: e.oldValue ?? null,
     newValue: e.value ?? null,
+    ...(claimId === undefined ? {} : { claimId }),
   };
   const r = onClaimsEdit(activeSpreadsheet(), edit, sellerDeps());
   if (r.handled && r.reverted) console.log("onClaimsEdit: a sale was reverted");
