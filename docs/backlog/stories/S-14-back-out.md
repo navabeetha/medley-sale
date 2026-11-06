@@ -28,6 +28,14 @@
 
 - The D-026 requirement "a waiter promoted by a write gets `Promoted at` (and so a `To do` row)" can't happen on a reserve: new claims join the end of the line. It is pinned here and in S-15 instead. A back-out or a sale that frees a unit must stamp `Promoted at` on the waiter who moves up, using `previousRole` from a recalculation before the write.
 
+## Bugfix tickets carried from S-15 QA re-check (PM, 2026-11-06); do these first
+
+- **F7 (S3):** `syncStateNotes` reads one note per Claims row inside the lock (every timed run and F2 repair). Read the State column's notes in one batch (add a batch `getNotes(col)` to Tab) so a concurrent reserve never waits long enough to answer `busy`.
+- **F8 (S3):** a State cleared with Delete on a row with a Claim ID silently drops the claim from the queue. Note a blank State on such rows too (same note mechanism as NOT_A_STATE, with wording that says to choose active, released or sold).
+- **F9 (S4):** the F2 staleness check misses a sort that leaves the same State on the edited row. Also compare the row's Claim ID with what the handler read under the lock if possible; otherwise run the full repair whenever the row's claim can't be confirmed.
+- **F10 (S4):** an accepted edit clears any note on that State cell, including the seller's own. Clear only our own notes (refusal reason or NOT_A_STATE), now that `getNote` exists.
+- Coverage: blank normalisation in the staleness check; the blank-newValue early return; the "needs a Claim ID" condition for the typo note.
+
 ## the seller needs to do
 
 Nothing.
