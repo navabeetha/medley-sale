@@ -1568,3 +1568,48 @@ Scope: the installable on-edit handler (`onClaimsEdit`), the 10-minute repair (`
 
 ### Verdict
 **NOT YET.** Everything else meets the criteria, and R1–R3 are fixed and pinned. F1 can silently lose a reservation on a plausible platform path, and its fix is small: a failing test, then no write-back of a non-State oldValue. F2–F4 are S3s for the PM to schedule (before G1 is best). F5 and the coverage gaps should be closed in the same bugfix round.
+
+**Re-check, 2026-11-06 (commits 9925e8d red, b0a28bc PM test change, 22d1194 fix, e81483a PM test literal):**
+- **Gate (fresh runs; Playwright not run, same reason):** typecheck ok, eslint ok, Vitest 38 files / 1179 tests passed, size 5.0 KB of 50 KB, pii-scan 227 files / 0 findings, `build:gas` built.
+- **Red then green:** at b0a28bc on its own, 22 tests fail in 3 files. The fix commit touches no tests.
+- **The two PM test changes are legitimate:**
+  - e81483a: the "11-digit" value really had 12 digits starting 91, so it contradicted the F4 link test. It now has 11.
+  - b0a28bc: it drops a hint that a leftover Promoted at proves a claim held before. Reserve never stamps first-time holders, so that inference would be wrong. The test now matches D-039.
+- **F1 fixed.** A sale with no oldValue stays `sold` and State is never blanked. An oversell without oldValue keeps the sale and leaves a note.
+- **F2 fixed for the repro.** A sort before the trigger runs leads to a full repair, so Person is right and nobody is stamped (D-039).
+- **F3 fixed.** A typo'd State gets a note and nothing else is written. Correcting it clears the note, and repeated repairs write nothing.
+- **F4 fixed.** A 12-digit numeric cell starting 91 gets a link. All three call sites are pinned.
+- **F5 fixed:** `buildSellerMessage` now has tests.
+- **Mutation check (new guards):** 18 of 23 mutants went red, covering:
+  - F1: no write-back, no `reverted` result without oldValue, the before-list, the oversell note.
+  - F2: staleness check off, and a stale edit doing nothing.
+  - F3: the edit note; the sync setting, clearing, stability and "clears only ours" checks; the repair calling the sync.
+  - F4: all three call sites, the 11-digit and text cases.
+- **Survivors:**
+  - Two are equivalent: previousRoles without oldValue, and the leftSold guard.
+  - Untested: the blank normalisation in the staleness check.
+  - Untested: the blank-newValue early return. Without it, a blank cell gets a NOT_A_STATE note that the next timed run removes.
+  - Untested: the "needs a Claim ID" condition for the typo note.
+- **Unforced choices, judged:**
+  - A blank newValue takes the lock and writes nothing, and leaves a stale note for the timed job to clear. Acceptable.
+  - The sync clears our note when the cell is emptied. Correct, because the note only ever describes a typo.
+  - The F1 oversell check treats the edited claim as `active` in the before-list. Acceptable, since without oldValue we can't know better.
+
+**New findings (re-check):**
+- **F7, S3 (suspected, needs a live timing): one `getNote` call per Claims row inside the lock.** `syncStateNotes` makes a separate Range.getNote call for every row, on every timed run and every F2 repair. 300 claims means 300 calls while the script lock is held, which could push a parallel reserve towards `busy` (30 s wait). Fix: read the State column's notes in one batch (add a column-notes read to the Tab interface).
+- **F8, S3: clearing a claim's State with Delete takes it out of the queue with no note.** Repro (fake): quantity 1, holder 1 and waiter 2. Clear claim 1's State. The edit gives `handled:false`, and the next repair makes claim 2 the holder. There is no note because blank is not a typo. Reselecting `active` restores the claim by ID. Fix: also note a blank State on a row with a Claim ID.
+- **F9, S4: a sort that leaves a claim with the same State on the edited row is not detected.** The handler then recalculates the wrong item. The timed job repairs it within 10 minutes, but the promotion stamp is lost (D-039). Rare.
+- **F10, S4: every accepted edit clears any note on that State cell, including one the seller wrote.** Now that `getNote` exists, clear only our own notes (NOT_A_STATE or a refusal reason).
+
+**Updated live G1 checks (staging):**
+1. The trigger fires from the Sheets phone app and from a desktop browser.
+2. Whether `e.oldValue` and `e.value` are present for a phone dropdown, a desktop dropdown, a single-cell paste and Undo. Log presence only.
+3. A multi-cell paste on Claims runs the repair; one on another tab does nothing.
+4. Promoted at and Sold at stored as text or dates; a second repair rewrites nothing.
+5. Refusal and NOT_A_STATE notes show in the phone app and clear when the cell is fixed.
+6. Both triggers can be set up from the Triggers screen with only `spreadsheets.currentonly`.
+7. Book enough units to run Claims past its last grid row. The rows land directly under the last claim and carry the State dropdown, and typing `Sold ` is refused there.
+8. Time recalculateAll with a realistic number of Claims rows (G1). If it takes more than a few seconds, batch the note reads first (F7). Run a reserve during it and confirm it doesn't answer `busy`.
+9. A `+91…` number typed without spaces in Number gets a link.
+
+**Verdict (re-check): SIGN-OFF.** F1–F5 are fixed and pinned. F7 and F8 are S3s for the PM, best done before the G1 gate (F7 at least measured). F9 and F10 are S4s.
