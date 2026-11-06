@@ -1311,3 +1311,97 @@ Both forms would only carry the seller's own tracking, which is what D-037 remov
 - All three earlier surviving mutants now go red: the case-sensitive Amazon regex, removing the port strip, and keeping empty params. Putting back the old wide regex turns 2 tests red.
 - New S4 (note only): a host with a trailing dot (`www.amazon.in.`) is no longer treated as Amazon, so its query is kept. Not plausible in copied links.
 - F2 was checked by the PM on the live response. F3 and F4 are accepted as S4. **Sign-off stands.**
+
+## 2026-11-06: S-11 reserve API (branch S-11-reserve-api, commits 18eb86f red, 04c1751 PM note, 64bcabd green)
+
+**What changed:** a new `POST {action:"reserve"}` (`src/api/reserve.ts`, `src/api/handle-post.ts`, `doPost` in the Apps Script bundle), buyer phone normalisation (`src/domain/phone.ts`), the WhatsApp message builder (`src/domain/message.ts`), and the catalogue's top-level `reserving` flag (D-038.6).
+
+**Gate (run fresh, unpiped; Playwright not run because this story does not touch `src/site`, and the PM runs e2e after merge):** `npm run typecheck` ok (both tsconfigs). `npx eslint .` ok. `npx vitest run`: 35 files, 940 tests passed. `npm run size`: 3.4 KB of 50 KB gzipped. `node tools/pii-scan.mjs`: 212 files, 0 findings. `npm run build:gas` built. The line "Automatic merge went well…" in the Vitest output comes from `pii-scan-merge.test.ts`, which merges inside a throwaway repo. It predates this story and is harmless.
+
+**Red then green:** at 18eb86f (exported copy), the new files fail to load (no module) and the `reserving` and doPost assertions fail, 12 failed. Green at 64bcabd.
+
+**Bundle and runtime:** esbuild targets es2019, so `??` and `?.` are lowered. The bundle has no `structuredClone`, `.at(`, `Object.hasOwn`, `replaceAll`, `Intl`, `toLocaleString`, `crypto`, `TextEncoder` or `fetch`. `Array.from`, `Uint8Array`, `padStart`, `Object.fromEntries` and `flatMap` are all in Apps Script V8. Nothing in the doPost path logs (the only `console.log` calls are in the editor-run functions), and `handlePost` swallows exceptions behind a generic `{error:"unavailable"}`.
+
+**Verified correct (probes against the in-memory fake, synthetic `+91 90000 000xx` numbers):**
+- Basket cap: 15 units, also with duplicate ids (8 + 8 refused), a quantity given as `"2"` or `1.5`, and a padded id.
+- 20-claim cap: counted across number formats (`+91 90000 00011`, `9000000011`, `+91-90000-00011` and `(900) 000-0011` normalise to one value). Also counted when the stored cell has no apostrophe, as real Sheets reads it back.
+- Formula guard: leading `=`, `+`, `-` and `@` in the name (after trim) and the key are guarded. A leading tab or CR on the name is trimmed off before the guard.
+- Token: 16 bytes from at least 2 UUIDs, with the version and variant nibbles dropped, so 128 bits (D-005). It reaches the client only in the POST response body and in the `#/b/<token>` fragment of the private link.
+- Seller number: appears only inside `whatsappUrl` (D-011).
+- Lock order: nothing is read from a tab before `waitLock` (only the tab-existence check runs first).
+
+**Mutation check (scratch copy):**
+- 20 of 24 mutants went red, including: both caps off by one, dropping the unguard step, counting released claims, accepting hidden tabs, `previousRole` null, never clearing the cache, never releasing the lock, a 64-bit token, phone allowing `+0` or 16 digits, ordinal teens, rupee grouping and a trailing slash.
+- 4 survived (see the coverage gaps below).
+
+### Findings
+
+**F1, S1 by the CLAUDE.md definition (a lost reservation reported as success; low likelihood, because it needs an Apps Script error mid-write): a part-way write leaves a booking that a retry "replays" as success, without the missing units.**
+- The Bookings row is written first, then one `appendRow` per claim.
+- If a claim append throws (a transient "Service Spreadsheets failed", a quota or timeout error), the buyer gets `{error:"unavailable"}`. Their retry with the same idempotency key (T-15) finds the booking and returns `ok:true` built from whatever claims exist.
+- Repro (fake): 3 units of a quantity-3 item, with the 2nd claim append throwing. The retry returns `ok:true` with 1 unit, and 2 units are never saved. If the 1st claim append throws, the retry returns `ok:true` with `units: []` and a message with no items.
+- The code comment's "a booking with no claims (harmless)" does not hold, because replay treats that booking as the original answer.
+- Fix direction (failing test first):
+  - (a) Write all claim rows in one batched write (add `appendRows` to the Tab interface, backed by one `setValues` call), so claims are all-or-nothing.
+  - (b) In `replay`, if no Claims row (any state) references the booking, finish the reservation under the original booking id and token instead of answering from nothing.
+
+**F2, unconfirmed suspicion, S1 consequence if real: no `SpreadsheetApp.flush()` before `releaseLock`.**
+- Apps Script may batch spreadsheet writes. A next request that takes the lock before the batch commits could read stale Claims, giving two holders of the last unit (T-01).
+- The fake cannot show this. T-18 may pass by timing luck.
+- Fix direction: add `flush()` to the `Spreadsheet` interface (a no-op in the fake, `SpreadsheetApp.flush()` in the adapter). Call it after the last write and before `releaseLock`, and add a test that it is called inside the lock. This is cheap insurance, so do it before T-18.
+
+**F3, S3: an unset or relative `SITE_URL` makes the message's private link `/#/b/<token>`, which is unusable in WhatsApp.**
+- Repro: `siteUrl: ""` gives the last line `Change or back out: /#/b/<token>`.
+- The booking is saved and the buyer's browser still has the booking page, but the link in the chat (and the seller's copy of it) is dead.
+- Smallest fix: treat a `SITE_URL` that is not an absolute `https://` URL as not configured. Refuse before the lock with a distinct error (e.g. `not-configured`), and add it to the runbook's staging and G2 setup checks. Hard-coding the Pages URL is not an option (it would put the owner's account name in the repo, D-024).
+
+**F4, S3 (conditional on S-10): the idempotency key works as a bearer secret.**
+- Anyone who sends another buyer's key gets that buyer's token and a message carrying their name.
+- Repro: buyer A reserves with key `"1"`. A request with key `"1"`, a different number and a different name gets A's token back (`same token: true`).
+- Safe only if S-10 generates keys with at least 128 random bits.
+- Fix direction:
+  - Replay only when the request's normalised number equals the booking's Number. On a mismatch, answer `invalid-request`.
+  - Optionally refuse keys that don't match `^[A-Za-z0-9-]{16,64}$`, which also limits what is written to the sheet.
+
+**F5, S3 (carried to S-13): `whatsappUrl` can exceed the 6.3 limit of 2,000 characters.**
+- 15 distinct units with 60-character names and a 60-character buyer name give 2,317 characters.
+- S-11's tests declare this S-13's job, but the URL is built server-side now. S-13 must put the "…and N more" shortening in `src/domain/message.ts` or the API, not in the site.
+
+**F6, S4: `releaseLock` throwing masks a saved booking.** The implementer said lock-release errors do not mask the result, but `releaseLock` is not wrapped. Repro: a `releaseLock` that throws turns a saved booking into `{error:"unavailable"}`. An idempotent retry recovers the right answer (now replayed). Fix: wrap `releaseLock` in try/catch, as `cache.remove` already is.
+
+**F7, S4: buyer phone accepts a trunk 0.** Ten digits starting with 0 (even all zeros) get `+91` prefixed, so the stored number is `+91` then `0…`. `+91 (0)` followed by ten digits is also kept with the stray 0. That literally meets 6.3 ("10 digits means India"), but the stored E.164 is invalid. Not checking for a first digit of 6–9 is defensible, because Indian landlines are 10 digits too. Fix direction: refuse a 10-digit number starting 0 and `+910…`, matching D-036's trunk-0 rule. Note for the S-10 copy: the synthetic number typed as `91` plus ten digits without `+` is refused, so the error text should say "add +".
+
+**F8, S4: honeypot replies can be told apart from real ones** (`bookingId: 0`, `whatsappUrl: null`, empty `units` although items were sent, and `ok:true` even for an invalid name or number). Any non-empty value trips it, including `0` and `false`. This doesn't matter against bots. The real risk is browser autofill filling the hidden field, which would give a real buyer a silent non-booking. Note for the S-10 UI: the field needs `autocomplete="off"`, a non-standard name, `tabindex="-1"` and `aria-hidden`.
+
+**F9, S4 (unconfirmed, needs a live check): values the sheet may re-parse.**
+- The idempotency key is neither trimmed nor guarded against leading whitespace, so `\t=HYPERLINK(…)` is written raw. Sheets very probably does not evaluate a tab-led string as a formula, but this is not confirmed.
+- The token is written unguarded. In about 1 booking in a million, a 32-hex token is all digits, or digits with one `e`. `appendRow` may store that as a number, so the link would never match.
+- Fix direction: write Token and Idempotency key with a forced leading apostrophe (Sheets drops it on read).
+
+**F10, S4 notes (no change needed):**
+- The 20-claim cap misses a Number cell that the seller re-typed as a plain number (no `+`). Numbers are unverified anyway (D-005).
+- A spreadsheet with Claims but no Bookings reports `reserving: true` while reserve answers `not-reserving`.
+- The message format follows the S-13 seller note: the brand goes in brackets after the name, so the price moved out of the brackets. Waiting lines also carry a price, which 2.8 does not show. The PM confirms this in S-13.
+- The private link inside `wa.me?text=` is in a query string at WhatsApp's end. That is by design (2.8), not a breach of 4.3, which is about Google's logs.
+
+### Coverage gaps (mutants that survived)
+- The buyer name's line breaks are not flattened in the message. No test sends `"Asha\nReserved for me:"`, so a name could forge lines in the seller's chat.
+- Replay skipping ended (released) claims: removing the `ended` skip stays green.
+- Claim ids taken from the whole column, so a row with an odd State keeps its id out of reuse: changing it to "valid rows only" stays green.
+- The Claims `Item` column guard (a seller item name starting `+` or `-`): removing `guardText` stays green.
+- Honeypot non-string values (`0`, `false`) are not pinned.
+
+### Live checks still needed (staging only, after a new web-app version that includes doPost)
+- **T-18:** 10 parallel reserves of a quantity-1 item give 1 holder, 9 waiting, unique ascending claim ids, 10 bookings and no "busy". Record the slowest response against the 30 s lock wait. Do this after F2 is fixed.
+- **OAuth scope:** the manifest pins only `spreadsheets.currentonly`. CacheService, PropertiesService and ContentService already run live in doGet. Utilities.getUuid already runs in migrate. LockService is the only new service, and I believe it needs no scope, but this is not confirmed. A first live POST must succeed without a "You do not have permission" error.
+- **Sheets read-back:** a name `=1+1` and the E.164 Number show as text, not as a formula or number. The apostrophe is consumed and reads back without it, and the 20-cap and idempotency replay still match. Check whether `Created` (an ISO string) is stored as text or converted to a date, and that `Promoted at` round-trips. Check the F9 tab-led key.
+- **Live POST:** a text/plain POST from the Pages origin gets JSON back with no CORS preflight.
+
+### Not verified
+- Playwright (not run, by instruction).
+- The real Apps Script runtime: the bundle was checked statically only.
+- S-10's key generation and honeypot markup (the UI track, not merged here).
+- Behaviour under real contention.
+
+### Verdict
+**NOT YET.** F1 (lost reservation reported as success after a mid-write failure) should get a failing test and a fix first. F2 (flush before release) is cheap and belongs in the same change, before T-18. F3 and F4 are S3s for the PM to schedule before G1. Everything else is S4 or a coverage gap.
