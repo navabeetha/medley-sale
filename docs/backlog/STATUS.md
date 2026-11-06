@@ -1,6 +1,6 @@
 # Status board
 
-*Maintained by the PM and updated after every story. Last updated: 2026-11-06 (R1 shipped on the real sheet; S-04 and S-06 Done; D-037 link-tracking strip live).*
+*Maintained by the PM and updated after every story. Last updated: 2026-11-06 evening (fast path D-038: S-09 and S-11 Done and merged; S-10 and S-15 in progress).*
 
 **Scope:** MVP only (brief Section 8), 43 points in 4 slices, worked in order.
 **Now:** **Release R1 is live (2026-11-06)**: https://navabeetha.github.io/medley-sale/ reads the seller's real sheet through the "R1 catalogue" web app (browse-only, [D-034](../decisions/D-034-browse-only-first-release.md) to [D-036](../decisions/D-036-r1-qa-hardening.md)). S-01 to S-06 Done. Nothing has been posted to the group yet; when to share is the seller's call.
@@ -12,6 +12,9 @@
 
 **Resume here:**
 1. **Seller's order (2026-11-06):** (a) complete the customer journey (reserving), (b) an easier way to add new items and make their cards (new scope, not in the brief; scope it with her after the MVP), (c) search and filter, which she'd take earlier if it's quick. **PM plan:** S-07 first (1 pt, red tests parked on `S-07-filter-search`, ships on R1 with no seller steps), then S-08 (needed before S-17), then Slices 2 to 4 (S-09 to S-18). Reserving goes live only at G2 together with back-out and the sell workflow, because it replaces comment-claiming on the real sheet. Fold the brand-in-message note into S-13. **Seller chose the fast path ([D-038](../decisions/D-038-fast-path-to-reserving.md)):** S-07, S-08 and S-16 postponed; wave 1 is S-11 (API track) and S-09 (UI track) in parallel.
+   - **Progress (2026-11-06 evening):** S-09 basket Done (QA sign-off, plus a follow-up bugfix round signed off). S-11 reserve API Done (QA found an S1, a partial write replayed as success, before anything shipped; fixed in a bugfix round and re-checked). Both merged to `main`, local, **not pushed** (push at the next milestone; the basket shows only when the catalogue says `reserving: true`). Gate on main: 1039 unit, 524 e2e, 5.4 KB, pii clean.
+   - **In progress:** S-15 seller sheet workflow (API track; S-11 re-check R1–R3 first) and S-10 reservation form (UI track; S-09 re-check B1–B3 first). Sibling worktrees: `../a44GarageSale-api` and `../a44GarageSale-ui` (node_modules symlinked; `node_modules` is in `.git/info/exclude`; only one checkout may run Playwright at a time, because port 4173 is fixed and reused).
+   - **Before G1 (staging live checks):** push the S-11+ bundle to the build copy and deploy a new staging web-app version with doPost; set `SITE_URL` in staging Script Properties (seller step, absolute https); T-18 (10 parallel reserves), OAuth scope with LockService, `appendRows` placement, apostrophe read-back, text/plain POST CORS.
 2. **Carry-over follow-ups:** D-037 S4 notes (a trailing-dot Amazon host or a percent-encoded tracker name keeps its query); `pii-scan`'s tracked-clasp path rule still matches only `.clasp.json` (the gitignore now covers `.clasp*.json`); D-028 error wording; 16-bit greyscale; broken rels traceback; Python 3.9 end of life; migrate's per-row `getGrid` slowness; `doGet` cache/ContentService outside the try; silent `unavailable` errors; F-A to F-D and R2 to R6.
 
 **Live headings (Books row 2):** Author, Brand (+ Link), Available from, Status, Price, Photos, (blank), (blank), Notes, Person.
@@ -36,17 +39,17 @@ G0 is staged per [D-018](../decisions/D-018-g0-in-stages.md). Steps: [docs/runbo
 
 | Backlog | Ready | In progress | In QA | Done |
 |---|---|---|---|---|
-| S-07 to S-18 | none | none | none | S-01 to S-06 |
+| S-07, S-08, S-12 to S-14, S-16 to S-18 | none | S-10, S-15 | none | S-01 to S-06, S-09, S-11 |
 
 ## Slices
 
 | Slice | Stories | Pts | Done pts | Exit | Status |
 |---|---|---|---|---|---|
 | 1. See the sale | S-01 to S-08 | 20 | 17 | Catalogue live, and D-001 proven | In progress (R1 live; S-07, S-08 left) |
-| 2. Reserve | S-09 to S-13 | 11 | 0 | Reserve through to the WhatsApp URL | Not started |
+| 2. Reserve | S-09 to S-13 | 11 | 5 | Reserve through to the WhatsApp URL | Not started |
 | 3. Back out and sell | S-14 to S-16 | 8 | 0 | Full loop on staging, then G1 | Not started |
 | 4. Release | S-17, S-18 | 4 | 0 | Link ready for the group (G2) | Not started |
-| **Total** | | **43** | **17** | | |
+| **Total** | | **43** | **22** | | |
 
 ## Stories
 
@@ -58,16 +61,16 @@ G0 is staged per [D-018](../decisions/D-018-g0-in-stages.md). Steps: [docs/runbo
 | [S-04](stories/S-04-catalogue-api.md) | Catalogue API | 2 | 1 | S-02, S-03 | Done (live checks passed on the real sheet 2026-11-06) | D-001 go |
 | [S-05](stories/S-05-photo-pipeline.md) | Photo pipeline | 2 | 1 | S-03 | Done (live run and seller review passed 2026-11-05) | Export done |
 | [S-06](stories/S-06-catalogue-screen.md) | Catalogue screen | 3 | 1 | S-04 | Done (seller phone check passed 2026-11-06) | |
-| [S-07](stories/S-07-filter-search.md) | Filter and search | 1 | next | S-06 | Backlog (moved after R1) | |
-| [S-08](stories/S-08-item-view.md) | Item view | 2 | next | S-05, S-06 | Backlog (moved after R1) | |
-| [S-09](stories/S-09-basket.md) | Basket | 2 | 2 | S-06 | Backlog | |
-| [S-10](stories/S-10-reservation-form.md) | Reservation form | 2 | 2 | S-09 | Backlog | |
-| [S-11](stories/S-11-reserve-api.md) | Reserve API | 3 | 2 | S-02, S-03 | Backlog | |
+| [S-07](stories/S-07-filter-search.md) | Filter and search | 1 | next | S-06 | Backlog (postponed, D-038) | |
+| [S-08](stories/S-08-item-view.md) | Item view | 2 | next | S-05, S-06 | Backlog (postponed, D-038) | |
+| [S-09](stories/S-09-basket.md) | Basket | 2 | 2 | S-06 | Done (QA signed off 2026-11-06, follow-ups too) | |
+| [S-10](stories/S-10-reservation-form.md) | Reservation form | 2 | 2 | S-09 | In progress | |
+| [S-11](stories/S-11-reserve-api.md) | Reserve API | 3 | 2 | S-02, S-03 | Done (QA signed off after bugfix round 2026-11-06; T-18 live check pending) | |
 | [S-12](stories/S-12-booking-page.md) | Booking page | 2 | 2 | S-10, S-11 | Backlog | |
 | [S-13](stories/S-13-whatsapp-handoff.md) | WhatsApp handoff | 2 | 2 | S-12 | Backlog | |
 | [S-14](stories/S-14-back-out.md) | Back out | 3 | 3 | S-02, S-12 | Backlog | |
-| [S-15](stories/S-15-seller-sheet-workflow.md) | Seller sheet workflow | 3 | 3 | S-02, S-03 | Backlog | G1 confirm |
-| [S-16](stories/S-16-seller-email-summary.md) | Seller email summary | 2 | 3 | S-11, S-14 | Backlog | |
+| [S-15](stories/S-15-seller-sheet-workflow.md) | Seller sheet workflow | 3 | 3 | S-02, S-03 | In progress | G1 confirm |
+| [S-16](stories/S-16-seller-email-summary.md) | Seller email summary | 2 | 3 | S-11, S-14 | Backlog (postponed, D-038) | |
 | [S-17](stories/S-17-qa-privacy-pass.md) | QA and privacy pass | 2 | 4 | S-08, S-13, S-14, S-15 | Backlog | |
 | [S-18](stories/S-18-cutover.md) | Cutover | 2 | 4 | S-16, S-17 | Backlog | G2 |
 
