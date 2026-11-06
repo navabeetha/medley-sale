@@ -34,8 +34,11 @@ function refusalText(r: Refusal): string | null {
 }
 
 export interface BasketView {
-  /** Call with every catalogue shown (cached or live), BEFORE building rows. */
-  sync(items: readonly CatalogueItem[], reserving: boolean): void;
+  /**
+   * Call with every catalogue shown (cached or live), BEFORE building rows. `live` is false for the
+   * cached render: that one prunes for display only (QA S-09 F4, D-038 rule 8).
+   */
+  sync(items: readonly CatalogueItem[], reserving: boolean, live: boolean): void;
   /** The Add / stepper control for a row, or null outside reserving mode. */
   control(item: CatalogueItem): HTMLElement | null;
 }
@@ -45,10 +48,14 @@ export function createBasketView(): BasketView {
   let basket = readStored();
   let message: string | null = null;
   let bar: HTMLElement | null = null;
+  // Entries a cached render hid because the (possibly stale) cached list lacks them. They are still in
+  // storage and are kept there until a live response says whether they really left (QA S-09 F4).
+  let hidden: Basket = [];
+  let watcher: ResizeObserver | null = null;
   const updaters = new Map<string, () => void>(); // item id -> refresh its control
 
   function persistAndRender(): void {
-    writeStored(basket);
+    writeStored([...basket, ...hidden]);
     for (const u of updaters.values()) u();
     renderBar();
   }
@@ -61,17 +68,33 @@ export function createBasketView(): BasketView {
     persistAndRender();
   }
 
+  // Publishes the bar's real height as --bar-h on <html>; the CSS uses it for scroll-padding-bottom (and
+  // main's bottom padding). The bar itself is position: sticky at the end of the page, so the end of the
+  // list can never be covered whatever height it has: no script/layout race. Neither a refusal message
+  // nor larger text can hide a row or a focused control behind the bar (QA S-09 F1, F2; D-038 rule 8). Set through the CSSOM because CSP is
+  // `style-src 'self'` (no injected <style>). offsetHeight already includes the safe-area padding.
+  function publishBarHeight(): void {
+    document.documentElement.style.setProperty("--bar-h", `${bar?.offsetHeight ?? 0}px`);
+  }
+
   // The bar exists only while something is selected (brief 7). Button text carries the count, so
   // nothing depends on colour.
   function renderBar(): void {
     if (!active || totalUnits(basket) === 0) {
       bar?.remove();
       bar = null;
+      watcher?.disconnect();
+      publishBarHeight();
       return;
     }
     if (!bar) {
       bar = el("div", undefined, "basket-bar", "basket-bar");
       document.body.append(bar);
+      // Also catches height changes that do not come through a render (text zoom, rotation, wrapping).
+      if (typeof ResizeObserver !== "undefined") {
+        watcher ??= new ResizeObserver(publishBarHeight);
+        watcher.observe(bar);
+      }
     }
     const inner = el("div", undefined, "basket-bar-inner");
     if (message) {
@@ -83,6 +106,7 @@ export function createBasketView(): BasketView {
     go.href = "#/reserve"; // S-10 builds that screen
     inner.append(go);
     bar.replaceChildren(inner);
+    publishBarHeight();
   }
 
   function control(item: CatalogueItem): HTMLElement | null {
@@ -131,14 +155,24 @@ export function createBasketView(): BasketView {
 
   return {
     control,
-    sync(items, reserving) {
+    sync(items, reserving, live) {
       active = reserving;
       document.body.classList.toggle("reserving", reserving);
       updaters.clear(); // rows are about to be rebuilt
       if (reserving) {
         // Items that left the catalogue drop silently; units shrink to what is free now.
-        basket = pruneBasket(basket, items);
-        writeStored(basket);
+        const pruned = pruneBasket(basket, items);
+        const stillHidden = hidden;
+        if (live) {
+          // Entries hidden by the cached render come back if the live list still has them.
+          hidden = [];
+          basket = pruneBasket([...basket, ...stillHidden], items);
+          writeStored(basket);
+        } else {
+          // Cached list: prune for display only. Whole entries it hides stay in storage until live (F4).
+          hidden = basket.filter((e) => !pruned.some((p) => p.id === e.id));
+          basket = pruned;
+        }
       }
       renderBar();
     },

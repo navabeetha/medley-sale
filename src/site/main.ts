@@ -149,11 +149,16 @@ function start(root: HTMLElement): void {
     }
   }
 
-  function show(c: Catalogue): void {
+  function show(c: Catalogue, live: boolean): void {
     contactUrl = c.contactUrl ?? contactUrl;
     hasList = true;
     const items = sortItems(c.items);
-    basket.sync(c.items, c.reserving); // before the rows, which ask it for their controls
+    basket.sync(c.items, c.reserving, live); // before the rows, which ask it for their controls
+    // The live list rebuilds every row, which would drop keyboard focus to <body> (QA S-09 F3):
+    // remember the focused control by row id + testid and put focus back afterwards.
+    const was = document.activeElement as HTMLElement | null;
+    const wasRow = was && list.contains(was) ? (was.closest("[data-id]") as HTMLElement | null)?.dataset.id : undefined;
+    const wasTestId = was?.dataset.testid;
     list.replaceChildren(...items.map((i) => row(i, c.contactUrl, firstPhoto(photos, i.id), basket.control(i))));
     const lines: HTMLElement[] = [];
     if (items.length === 0) {
@@ -163,7 +168,17 @@ function start(root: HTMLElement): void {
       if (items.some((i) => i.tab === "Books")) lines.push(el("p", "Books: Free for libraries and students.", "note"));
     }
     notes.replaceChildren(...lines);
+    if (wasRow) restoreFocus(wasRow, wasTestId);
     if (manifestSettled) applyPhotos();
+  }
+
+  function restoreFocus(rowId: string, testId: string | undefined): void {
+    const li = [...list.children].find((r) => (r as HTMLElement).dataset.id === rowId);
+    if (!li) return;
+    const same = testId ? li.querySelector<HTMLElement>(`[data-testid="${testId}"]`) : null;
+    // A control that is now disabled (e.g. "-" at zero) cannot take focus: use the row's first enabled one.
+    const target = same && !(same as HTMLButtonElement).disabled ? same : li.querySelector<HTMLElement>("button:not(:disabled)");
+    target?.focus();
   }
 
   function showLoading(): void {
@@ -196,7 +211,7 @@ function start(root: HTMLElement): void {
     else status.replaceChildren();
     try {
       const c = await fetchCatalogue();
-      show(c);
+      show(c, true);
       writeCache(c);
       status.replaceChildren();
     } catch {
@@ -214,7 +229,7 @@ function start(root: HTMLElement): void {
   const cached = readCache();
   if (cached) {
     try {
-      show(cached);
+      show(cached, false);
     } catch {
       // A cached list that cannot be drawn must not leave a blank page: drop it and load normally.
       clearCache();

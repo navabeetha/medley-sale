@@ -1368,6 +1368,25 @@ Both forms would only carry the seller's own tracking, which is what D-037 remov
 
 **Screenshot:** `docs/qa/screenshots/S-09-basket-390.png` (iPhone 14 profile, Chromium, synthetic items, Reserve (4)).
 
+**Re-check, 2026-11-06 (branch S-09-qa-followups: 2cc8895 red, 28f0323 green). Verdict: SIGN-OFF.**
+- **Gate** (fresh run, each step on its own): typecheck and eslint clean. Vitest 32 files, 791 passed. Playwright (fresh build, 4 projects) 524 passed, 4 skipped; the skips are the same WebKit CLS tests as before. Size 5.4 KB of 50 KB. pii-scan 0 findings. Red then green: 2cc8895 adds only `test/e2e/basket-qa-followups.spec.ts`; 28f0323 adds only `src/` and `public/`.
+- **The fix design:** the bar is now `position: sticky; bottom: 0` at the end of `<body>`, so it is in the page flow, not fixed. `--bar-h` is kept current by a ResizeObserver and feeds `html { scroll-padding-bottom }`.
+- **F1 fixed.** At 390 and 320 px, Chromium and WebKit, the bar is pinned to the viewport bottom while scrolling. Scrolled to the end, it sits 16 px (main's padding) below the last row, with or without the refusal message. No overlap, no horizontal overflow.
+- **F2 fixed.** At 390x600, tabbing from the top: 0 of 41 focus stops under the bar on Chromium, and 0 on WebKit (Alt+Tab).
+- **F3 fixed.** Keyboard focus on a stepper "+" before the live response is still on that control after the live list replaces the rows.
+- **F4 fixed.** The old repro (catalogue cache write fails, item missing from the cached list) now keeps the item in storage and shows it again once live arrives.
+- **Large text** (body and root at 28 px, applied after the bar exists): `--bar-h` follows the bar (204 px at 390, 242 px at 320, with the message). Nothing is covered, and no focus stop lands under the bar. At 320 px with the message, the bar takes about 35% of the screen.
+- **R1 mode** (`reserving` false or missing): full-page screenshot and `#app` DOM are byte-identical to the pre-S-09 R1 build at 390 px (Chromium).
+- **CLS:** 0 with the bar appearing and going (no-input clicks, at the top and at the end of the page). Also 0 when reloading from a cached reserving list with a basket into the live list.
+- The 390 px screenshot was retaken from this build; it looks the same.
+
+New findings, worst first:
+- **R-1, S4: on a page shorter than the screen, the bar floats mid-screen with white space under it.** This came in with the switch to sticky. Repro: reserving mode with 2 items at 390x700, add one. The bar's bottom is at 557 px, not 700. The bar still works. The existing e2e "stuck to the bottom" test passes only because its fixture is taller than the viewport. Fix: in reserving mode make body a min-height 100dvh flex column with `margin-top: auto` on the bar. Pin it with a short-list e2e test.
+- **R-2, S4: the basket can go past 15 after a live merge.** Repro: the catalogue cache write fails and the cached list lacks B (5 in the basket, hidden). While the cached list is showing, the user fills the visible basket to 15. The live merge then gives `Reserve (20)` with no message. On a later reload, `parseBasket` silently drops the entries past 15. This needs a failed cache write, and the S-11 API rejects baskets over 15 (`invalid-basket`), so nothing bad is saved. Fix: when merging hidden entries back, add each one only while the total stays at or under 15, and show the basket-limit message for any that don't fit. Write a failing test first.
+- **R-3, S4 (as the implementer noted): a cached list with fewer free units stores the lowered count once the user changes anything.** Repro: the cache says 1 free and the live list says 3. The buyer had 3, reloads, then touches another item. After the live render the item shows 1. The buyer can step it up again.
+
+Still needs a real device: the earlier list, plus a check on iOS Safari and Android Chrome that the sticky bar stays pinned when the toolbars collapse, and that the safe-area padding shows under it.
+
 ## 2026-11-06: S-11 reserve API (branch S-11-reserve-api, commits 18eb86f red, 04c1751 PM note, 64bcabd green)
 
 **What changed:** a new `POST {action:"reserve"}` (`src/api/reserve.ts`, `src/api/handle-post.ts`, `doPost` in the Apps Script bundle), buyer phone normalisation (`src/domain/phone.ts`), the WhatsApp message builder (`src/domain/message.ts`), and the catalogue's top-level `reserving` flag (D-038.6).
