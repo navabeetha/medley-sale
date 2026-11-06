@@ -1,6 +1,6 @@
 # Status board
 
-*Maintained by the PM and updated after every story. Last updated: 2026-11-06 (R1 shipped on the real sheet; S-04 and S-06 Done; D-037 link-tracking strip in QA).*
+*Maintained by the PM and updated after every story. Last updated: 2026-11-06 (R1 shipped on the real sheet; S-04 and S-06 Done; D-037 link-tracking strip live).*
 
 **Scope:** MVP only (brief Section 8), 43 points in 4 slices, worked in order.
 **Now:** **Release R1 is live (2026-11-06)**: https://navabeetha.github.io/medley-sale/ reads the seller's real sheet through the "R1 catalogue" web app (browse-only, [D-034](../decisions/D-034-browse-only-first-release.md) to [D-036](../decisions/D-036-r1-qa-hardening.md)). S-01 to S-06 Done. Nothing has been posted to the group yet; when to share is the seller's call.
@@ -8,12 +8,11 @@
 **R1 release record (2026-11-06):**
 - **Seller setup, all done:** backup copy (kept in her Drive); the real sheet's script ID in a separate gitignored clasp config (`.clasp.real.json`; push with `npx clasp -P .clasp.real.json push -f`); `addIdColumns` gave 8 columns, 65 IDs, 65 quantities; `SELLER_WHATSAPP` set; `warmCatalogue` every 5 minutes; web app deployed (Execute as Me, Anyone); Notes and links read by her.
 - **PM checks, all passed:** 62 live items match staging by ID, name, tab and photos (the 3 extra IDs are rows the catalogue hides, as on staging); T-12 clean apart from 4 Amazon tracking-query links (no neighbour data; led to D-037); `contactUrl` is `wa.me/91` + 10 digits; CORS `*` on both hops; 1.4 to 2.1 s warm. Gate 743 unit, 352 e2e, 3.4 KB, pii clean. Pages deploy green; a WebKit iPhone run on the live page showed 62 reserve links in 2.6 s, 0.3 s on a second visit, prefill correct.
-- **Seller phone check, passed.** Two notes: (1) the reserve message should include the **brand** ("Air purifier" alone was ambiguous); recorded on [S-13](stories/S-13-whatsapp-handoff.md) for the message work. (2) Strip link tracking: [D-037](../decisions/D-037-strip-link-tracking.md), on branch `R1-link-tracking`, in QA.
+- **Seller phone check, passed.** Two notes: (1) the reserve message should include the **brand** ("Air purifier" alone was ambiguous); recorded on [S-13](stories/S-13-whatsapp-handoff.md) for the message work. (2) Strip link tracking: [D-037](../decisions/D-037-strip-link-tracking.md), QA signed off (F1 fixed on re-check), merged and live 2026-11-06. The "R1 catalogue" deployment is now version 2 at the same URL. The live response has no tracker parameters and no Amazon queries (only a functional `region_id` remains), and 4 shortened links return 200.
 
 **Resume here:**
-1. **D-037:** after QA sign-off, merge `R1-link-tracking`, push, then `npm run build:gas`, `npx clasp -P .clasp.real.json push -f`, and `clasp redeploy` the "R1 catalogue" deployment to a new version (same URL). Check the live response has no query on Amazon links. Optionally push the same build to staging.
-2. **Plan the next slice** with the seller: S-07 (filter and search), S-08 (item view), or online reserving (Slice 2). Whichever comes first, fold in the brand-in-message note.
-3. **Carry-over follow-ups:** `pii-scan`'s tracked-clasp path rule still matches only `.clasp.json` (the gitignore now covers `.clasp*.json`); D-028 error wording; 16-bit greyscale; broken rels traceback; Python 3.9 end of life; migrate's per-row `getGrid` slowness; `doGet` cache/ContentService outside the try; silent `unavailable` errors; F-A to F-D and R2 to R6.
+1. **Plan the next slice** with the seller: S-07 (filter and search), S-08 (item view), or online reserving (Slice 2). Whichever comes first, fold in the brand-in-message note.
+2. **Carry-over follow-ups:** D-037 S4 notes (a trailing-dot Amazon host or a percent-encoded tracker name keeps its query); `pii-scan`'s tracked-clasp path rule still matches only `.clasp.json` (the gitignore now covers `.clasp*.json`); D-028 error wording; 16-bit greyscale; broken rels traceback; Python 3.9 end of life; migrate's per-row `getGrid` slowness; `doGet` cache/ContentService outside the try; silent `unavailable` errors; F-A to F-D and R2 to R6.
 
 **Live headings (Books row 2):** Author, Brand (+ Link), Available from, Status, Price, Photos, (blank), (blank), Notes, Person.
 
