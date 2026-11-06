@@ -1381,3 +1381,64 @@ describe("reserve: SITE_URL with userinfo is not configured (a surviving mutant 
     expect(h.ss.snapshot()).toBe(before);
   });
 });
+
+// ---- S-15 QA F4: a Number cell that Sheets turned into a number (the seller typed "+919000000011" without a space)
+
+describe("reserve: a Number cell holding a number is read as +91... (S-15 QA F4)", () => {
+  const NUMERIC = Number(BUYER_E164.slice(1)); // 919000000011: what Sheets stores for a typed "+919000000011"
+
+  /** Seeds an active claim for the buyer, then overwrites its Number cell with the bare number. */
+  function seedNumeric(ss: FakeSpreadsheet, claimId: number, state: "active" | "released" = "active"): void {
+    seed(ss, { claimId, itemId: "I-0002", state });
+    const claims = ss.getTab("Claims") as FakeTab;
+    claims.grid[claims.grid.length - 1]![CLAIM_HEADERS.indexOf("Number")] = NUMERIC;
+  }
+
+  it("counts numeric-Number claims towards the 20-claim limit: 20 of them refuse a 21st", () => {
+    const ss = build();
+    for (let i = 0; i < 20; i++) seedNumeric(ss, 100 + i);
+    const before = ss.snapshot();
+    expect(harness(ss).run({ items: [{ id: "I-0002", quantity: 1 }] })).toMatchObject({ ok: false, error: "too-many-claims" });
+    expect(ss.snapshot()).toBe(before);
+  });
+
+  it("the boundary holds: 19 numeric claims allow exactly one more", () => {
+    const ss = build();
+    for (let i = 0; i < 19; i++) seedNumeric(ss, 100 + i);
+    const h = harness(ss);
+    expect(h.ok({ items: [{ id: "I-0002", quantity: 1 }] }).units).toHaveLength(1);
+    expect(h.run({ items: [{ id: "I-0002", quantity: 1 }] })).toMatchObject({ ok: false, error: "too-many-claims" });
+  });
+
+  it("numeric-Number claims that are not active do not count", () => {
+    const ss = build();
+    for (let i = 0; i < 20; i++) seedNumeric(ss, 100 + i, "released");
+    expect(harness(ss).run({ items: [{ id: "I-0002", quantity: 1 }] }).ok).toBe(true);
+  });
+
+  it("does not count a numeric Number that belongs to someone else", () => {
+    const ss = build();
+    for (let i = 0; i < 20; i++) {
+      seedNumeric(ss, 100 + i);
+      const claims = ss.getTab("Claims") as FakeTab;
+      claims.grid[claims.grid.length - 1]![CLAIM_HEADERS.indexOf("Number")] = Number(OTHER_E164.slice(1));
+    }
+    expect(harness(ss).run({ items: [{ id: "I-0002", quantity: 1 }] }).ok).toBe(true);
+  });
+
+  it("replays a booking whose Bookings Number cell is numeric, for the same buyer, instead of refusing it", () => {
+    const ss = build();
+    seedBooking(ss, { id: 1, token: "tok-seeded-0001", key: "replay-key-0000002", number: NUMERIC as unknown as string });
+    seed(ss, { claimId: 2, itemId: "I-0001", bookingId: "1", number: BUYER_E164 });
+    const r = harness(ss).run({ idempotencyKey: "replay-key-0000002" });
+    expect(r).toMatchObject({ ok: true, bookingId: 1 });
+    expect(claimsOf(ss)).toHaveLength(2); // nothing new written
+  });
+
+  it("still refuses a replay from a different number when the stored Number is numeric (the token stays private)", () => {
+    const ss = build();
+    seedBooking(ss, { id: 1, token: "tok-seeded-0001", key: "replay-key-0000003", number: NUMERIC as unknown as string });
+    seed(ss, { claimId: 2, itemId: "I-0001", bookingId: "1", number: BUYER_E164 });
+    expect(harness(ss).run({ idempotencyKey: "replay-key-0000003", number: "90000 00021" })).toMatchObject({ ok: false, error: "invalid-request" });
+  });
+});

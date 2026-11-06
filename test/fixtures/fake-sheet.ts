@@ -11,10 +11,17 @@ export class FakeTab implements Tab {
   notes: { row: number; col: number; text: string }[] = [];
   /** Every string written through setCell/appendRow, for the 6.3 guard checks. */
   writtenStrings: string[] = [];
+  /**
+   * Opt-in (default off, so every existing test behaves as before): read strings back the way real Sheets does,
+   * with ONE leading apostrophe dropped ("'=X" reads as "=X"). Stored cells keep it; only getGrid() strips it.
+   * For tests of write/re-read stability (S-15 QA: `same()` treating "'=X" and "=X" as equal).
+   */
+  dropApostrophes = false;
 
   constructor(readonly name: string) {}
 
   getGrid(): CellValue[][] {
+    if (this.dropApostrophes) return this.grid.map((r) => r.map((v) => (typeof v === "string" && v.startsWith("'") ? v.slice(1) : v)));
     return this.grid.map((r) => [...r]);
   }
   setCell(row: number, col: number, value: CellValue): void {

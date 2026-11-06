@@ -74,8 +74,31 @@
 // NOT covered here, on purpose:
 //   - The Apps Script wiring (the installable trigger, ScriptApp, e.range -> ClaimsEdit, CacheService/LockService, the
 //     Tab.setNote and SpreadsheetApp parts of the adapter): thin, live-checked at G1. See the report.
-//   - Ended at on release, State validation of a typo'd State, oldValue that is not a valid State, a Quantity edit that
-//     leaves more sold than quantity (no revert: the engine clamps unitsLeft at 0).
+//   - Ended at on release, a Quantity edit that leaves more sold than quantity (no revert: the engine clamps unitsLeft at 0).
+//
+// BUGFIX ROUND (QA 2026-11-06, PM decisions; the block above is the original design, these lines override it):
+//   F1  The handler never writes a value that is not a valid State (active / released / sold) into a State cell. When
+//       `oldValue` is missing (null / undefined) or not a valid State: NO revert. The edited item is recalculated from the
+//       current grid (the new State stands), with each claim's previousRole = its CURRENT role (as recalculateAll, D-039:
+//       no stamps invented). Result { handled: true, reverted: false }. If that leaves more units sold than the quantity,
+//       a cell note explains it on the edited State cell (6.1.7) but nothing is blanked or reverted.
+//   F2  If the grid's State on the edited row is not `newValue` (the seller sorted Claims before the trigger ran), the row
+//       is not the edited claim. The handler runs a FULL recalculation of every item under the same single lock (one
+//       waitLock, one flush, one cache removal, one release) and answers { handled: true, reverted: false }. Hint for the
+//       implementer: the result must still stamp the waiter promoted by the release, so the repair cannot use "previous
+//       role = current role" blindly. The Promoted at left on a claim that is no longer a holder is the record that it was
+//       a holder before (reserve stamps every new holder), so previous role = holder where a stamp exists.
+//   F3  A new State that is not a valid State: under the lock a note NOT_A_STATE is set on that State cell and NOTHING else
+//       is written (no setCell at all). Result stays { handled: false }. The lock is taken, so the write is flushed, the
+//       cache cleared and the lock released as for any write. A later accepted edit of the cell removes the note.
+//       recalculateAll sets the same note on every State cell holding a non-blank value that is not a valid State (on a row
+//       with a Claim ID), clears that note (only that text) on cells that have become valid, leaves other notes alone, and a
+//       second run writes nothing.
+//   F4  A Number cell holding a JS number with exactly 12 digits starting 91 (Sheets re-typed "+919000000012") is read as
+//       "+91..." wherever the Number cell is read: the Message link, and reserve's 20-claim count and booking replay.
+//       Text cells are unchanged (normalisePhone is not touched).
+//   F5  buildSellerMessage has direct tests (test/unit/seller-message.test.ts); sold / released rows get a blank link.
+//   Fake: FakeTab.dropApostrophes (opt-in) reads strings back without ONE leading apostrophe, like real Sheets.
 import { describe, expect, it } from "vitest";
 import { CATALOGUE_CACHE_KEY } from "../../src/api/handle-get";
 import { guardText } from "../../src/api/migrate";
@@ -111,8 +134,8 @@ const item = (id: string, name: string, brand: string, price: number | null, qua
 });
 
 interface SeedClaim {
-  id: number; item: string; state?: string; name?: string; number?: string | null; booking?: number;
-  promoted?: string | null; notified?: boolean | null; soldPrice?: number | null; soldAt?: string | null; link?: string | null;
+  id: number; item: string; state?: string; name?: string; number?: CellValue; booking?: number;
+  promoted?: string | Date | null; notified?: boolean | null; soldPrice?: number | null; soldAt?: string | null; link?: string | null;
 }
 const tokenOf = (booking: number): string => `tok-${String(booking).padStart(4, "0")}`;
 /** Appends a claim the way the handlers would find it: guarded name and number. Adds its Bookings row on first use. */
@@ -814,5 +837,440 @@ describe("recalculateAll (the 10-minute repair job)", () => {
     expect(itemRow(ss, "Tech", "I-0001")).toEqual(itemRow(plain.ss, "Tech", "I-0001"));
     expect(itemRow(ss, "Tech", "I-0002")).toEqual(itemRow(plain.ss, "Tech", "I-0002"));
     expect(wa(claimRow(ss, 2)["Message link"]).url.pathname).toBe(`/${digits(2)}`);
+  });
+});
+
+// ======================================================================================================
+// BUGFIX ROUND (QA 2026-11-06). See the "BUGFIX ROUND" lines in the DESIGNED INTERFACE block at the top.
+// ======================================================================================================
+
+const STATE_COL = CLAIM_HEADERS.indexOf("State") + 1;
+/** The wording of the note on a State cell that holds something other than active / released / sold (F3, pinned). */
+const NOT_A_STATE = "Not a valid state — choose active, released or sold";
+const LATER = "2026-11-07T08:00:00.000Z";
+
+const claimsTab = (ss: FakeSpreadsheet): FakeTab => ss.getTab("Claims") as FakeTab;
+/** 1-based sheet row of a claim, wherever a sort has put it. */
+const rowOfClaim = (ss: FakeSpreadsheet, id: number): number => claimsTab(ss).grid.findIndex((r, i) => i > 0 && r[0] === id) + 1;
+const noteOf = (ss: FakeSpreadsheet, id: number): string | null => claimsTab(ss).getNote(rowOfClaim(ss, id), STATE_COL);
+/** Every value written into the State column through setCell from now on. */
+function watchStateWrites(ss: FakeSpreadsheet): CellValue[] {
+  const t = claimsTab(ss);
+  const writes: CellValue[] = [];
+  const orig = t.setCell.bind(t);
+  t.setCell = (r, c, v) => { if (c === STATE_COL) writes.push(v); orig(r, c, v); };
+  return writes;
+}
+
+// ---- F1 (S2): an edit event without a usable oldValue must never blank or revert the State
+
+describe("onClaimsEdit: an oldValue that is missing or not a valid State (QA F1)", () => {
+  // Quantity 1: claim 1 holds, claim 2 waits.
+  const QUEUE = [{ id: 1, item: "I-0001", promoted: STAMP }, { id: 2, item: "I-0001" }];
+
+  for (const [label, oldValue] of [["null", null], ["undefined", undefined], ["an empty string", ""], ["a typo'd State", "Sold "]] as const) {
+    it(`keeps a sale whose oldValue is ${label}: the new State stands, the waiter stays waiting, nothing is blanked`, () => {
+      const h = harness(build(QUEUE));
+      const writes = watchStateWrites(h.ss);
+      const r = h.edit(1, "sold", { oldValue: oldValue as CellValue });
+      expect(r).toEqual({ handled: true, reverted: false });
+      expect(stateOf(h.ss, 1)).toBe("sold");
+      expect(stateOf(h.ss, 2)).toBe("active");
+      expect(stamp(h.ss, 2)).toBeNull(); // the unit is sold, so the waiter is not promoted
+      expect(writes.filter((v) => v !== "sold" && v !== "active" && v !== "released")).toEqual([]); // never a non-State value
+      expect(writes).toEqual([]); // the seller's own edit already put "sold" there; there is nothing to write back
+      expect(noteOf(h.ss, 1)).toBeNull(); // one sold unit of one: no oversell, no note
+    });
+  }
+
+  it("recalculates the edited item from the grid: Status, Person, Sold at and Sold price follow the new State", () => {
+    const h = harness(build(QUEUE));
+    h.edit(1, "sold", { oldValue: null });
+    expect(itemRow(h.ss, "Tech", "I-0001")).toMatchObject({ Status: "Sold", Person: "Buyer 1" });
+    expect(claimRow(h.ss, 1)).toMatchObject({ "Sold at": NOW, "Sold price": 2500 });
+  });
+
+  it("does not invent a promotion when there was no oldValue: releasing the holder stamps nobody (as the timed job)", () => {
+    const h = harness(build(QUEUE));
+    const r = h.edit(1, "released", { oldValue: null });
+    expect(r).toEqual({ handled: true, reverted: false });
+    expect(stateOf(h.ss, 1)).toBe("released");
+    expect(itemRow(h.ss, "Tech", "I-0001")).toMatchObject({ Status: "Reserved", Person: "Buyer 2" });
+    expect(stamp(h.ss, 2)).toBeNull();
+  });
+
+  it("when the missing oldValue leaves more sold than the quantity, keeps both sales and explains it in a note on the edited State cell", () => {
+    const h = harness(build([{ id: 1, item: "I-0001", state: "sold", soldPrice: 2500, soldAt: STAMP }, { id: 2, item: "I-0001" }]));
+    const writes = watchStateWrites(h.ss);
+    const r = h.edit(2, "sold", { oldValue: null });
+    expect(r).toEqual({ handled: true, reverted: false });
+    expect(stateOf(h.ss, 1)).toBe("sold");
+    expect(stateOf(h.ss, 2)).toBe("sold"); // not reverted, not blanked
+    expect(writes).toEqual([]);
+    const note = noteOf(h.ss, 2);
+    expect(note).not.toBeNull();
+    expect(note!.length).toBeGreaterThan(0);
+    expect(itemRow(h.ss, "Tech", "I-0001").Status).toBe("Sold");
+    expect(claimRow(h.ss, 1)["Sold at"]).toBe(STAMP); // the earlier sale is untouched
+  });
+
+  it("a missing oldValue on a sale that fits leaves no note, and removes an older one", () => {
+    const h = harness(build(QUEUE));
+    claimsTab(h.ss).setNote(rowOfClaim(h.ss, 1), STATE_COL, "old refusal");
+    h.edit(1, "sold", { oldValue: null });
+    expect(noteOf(h.ss, 1)).toBeNull();
+  });
+
+  it("still flushes, clears the cache and releases the lock once", () => {
+    const h = harness(build(QUEUE));
+    h.edit(1, "sold", { oldValue: null });
+    const e = h.events;
+    expect(e.indexOf("flush")).toBeGreaterThan(e.lastIndexOf("write"));
+    expect(e).toContain(`cache:${CATALOGUE_CACHE_KEY}`);
+    expect(e.filter((x) => x === "releaseLock")).toHaveLength(1);
+  });
+});
+
+// ---- F2 (S3): a sort between the edit and the trigger run
+
+describe("onClaimsEdit: Claims re-sorted before the trigger ran (QA F2)", () => {
+  // Item A (I-0001, quantity 1): claim 1 holds (stamped), claim 2 waits. Item B (I-0002, quantity 3): claim 3 holds (stamped).
+  const SEED = [
+    { id: 1, item: "I-0001", promoted: STAMP, notified: true }, { id: 2, item: "I-0001" },
+    { id: 3, item: "I-0002", promoted: STAMP, notified: true },
+  ];
+
+  /** The seller releases claim 1, sorts Claims by Claim ID descending, THEN the trigger runs with the pre-sort row number. */
+  function releaseThenSort(h: Harness, over: Partial<{ newValue: CellValue }> = {}) {
+    const t = claimsTab(h.ss);
+    const row = rowOfClaim(h.ss, 1);
+    t.grid[row - 1]![STATE_COL - 1] = "released";
+    t.grid = [t.grid[0]!, ...t.grid.slice(1).sort((a, b) => Number(b[0]) - Number(a[0]))];
+    expect(t.grid[row - 1]![0]).toBe(3); // the edited row now holds claim 3 (item B): the premise of the test
+    return onClaimsEdit(h.ss, { tab: "Claims", row, column: STATE_COL, oldValue: "active", newValue: "released", ...over }, h.deps as never);
+  }
+
+  it("recalculates the item that really changed and stamps the waiter who moved up", () => {
+    const h = harness(build(SEED));
+    const r = releaseThenSort(h);
+    expect(r).toEqual({ handled: true, reverted: false });
+    expect(stateOf(h.ss, 1)).toBe("released");
+    expect(stamp(h.ss, 2)).toBe(NOW);
+    expect(itemRow(h.ss, "Tech", "I-0001")).toMatchObject({ Status: "Reserved", Person: "Buyer 2" });
+  });
+
+  it("is a full repair: the other item is recalculated too, and its holder keeps stamp and Notified", () => {
+    const h = harness(build(SEED));
+    releaseThenSort(h);
+    expect(itemRow(h.ss, "Tech", "I-0002")).toMatchObject({ Status: "Available", Person: "Buyer 3" }); // not the stale text
+    expect(stateOf(h.ss, 3)).toBe("active");
+    expect(stamp(h.ss, 3)).toBe(STAMP);
+    expect(claimRow(h.ss, 3).Notified).toBe(true);
+  });
+
+  it("does the repair under ONE lock: a single waitLock, flush after the last write, cache cleared, a single release", () => {
+    const h = harness(build(SEED));
+    releaseThenSort(h);
+    const e = h.events;
+    expect(e.filter((x) => x === "waitLock")).toHaveLength(1);
+    expect(e.filter((x) => x === "releaseLock")).toHaveLength(1);
+    expect(e.indexOf("write")).toBeGreaterThan(e.indexOf("waitLock"));
+    expect(e.indexOf("flush")).toBeGreaterThan(e.lastIndexOf("write"));
+    expect(e.indexOf(`cache:${CATALOGUE_CACHE_KEY}`)).toBeGreaterThan(e.lastIndexOf("write"));
+    expect(e.indexOf("releaseLock")).toBeGreaterThan(e.indexOf("flush"));
+  });
+
+  it("answers busy and writes nothing when the lock cannot be taken", () => {
+    const h = harness(build(SEED), { lock: { waitLock: () => { throw new Error("timeout"); }, releaseLock: () => {} } });
+    expect(releaseThenSort(h)).toEqual({ handled: false, error: "busy" });
+    expect(h.events).not.toContain("write");
+    expect(stamp(h.ss, 2)).toBeNull();
+  });
+
+  it("does not treat the row's new occupant as the edited claim: no sale check, no note, no revert on it", () => {
+    const h = harness(build(SEED));
+    const writes = watchStateWrites(h.ss);
+    releaseThenSort(h);
+    expect(writes).toEqual([]);
+    expect(claimsTab(h.ss).notes).toEqual([]);
+  });
+
+  it("a sort that leaves the edited claim on its row is an ordinary edit (grid State equals newValue)", () => {
+    const h = harness(build(SEED));
+    const r = h.edit(1, "released");
+    expect(r).toEqual({ handled: true, reverted: false });
+    expect(stamp(h.ss, 2)).toBe(NOW);
+    expect(itemRow(h.ss, "Tech", "I-0002").Status).toBe("Stale status"); // only the edited item is rewritten
+  });
+});
+
+// ---- F3 (S3): a typo'd State
+
+describe("onClaimsEdit: a new State that is not a valid State (QA F3)", () => {
+  const TWO = [{ id: 1, item: "I-0001", promoted: STAMP }, { id: 2, item: "I-0001" }];
+
+  it("puts an explanatory note on that State cell and answers handled:false", () => {
+    const h = harness(build(TWO));
+    const r = h.edit(1, "Sold ");
+    expect(r).toEqual({ handled: false });
+    expect(noteOf(h.ss, 1)).toBe(NOT_A_STATE);
+  });
+
+  it("writes nothing else: no cell value on any tab, no promotion, Status and Person left alone", () => {
+    const h = harness(build(TWO));
+    const before = h.ss.tabs.map((t) => JSON.stringify(t.grid));
+    h.ss.tabs.forEach((t) => { t.writtenStrings = []; }); // the seed went through appendRow; count only what the handler writes
+    h.edit(1, "Sold ");
+    const after = h.ss.tabs.map((t) => JSON.stringify(t.grid));
+    // The only change is the seller's own typo in the State cell (the harness put it there, not a handler write).
+    const typoGrid = JSON.parse(before[h.ss.tabs.indexOf(claimsTab(h.ss))]!) as CellValue[][];
+    typoGrid[rowOfClaim(h.ss, 1) - 1]![STATE_COL - 1] = "Sold ";
+    expect(after[h.ss.tabs.indexOf(claimsTab(h.ss))]).toBe(JSON.stringify(typoGrid));
+    h.ss.tabs.forEach((t, i) => { if (t !== claimsTab(h.ss)) expect(after[i]).toBe(before[i]); });
+    expect(h.ss.tabs.flatMap((t) => t.writtenStrings)).toEqual([]);
+    expect(stamp(h.ss, 2)).toBeNull();
+    expect(itemRow(h.ss, "Tech", "I-0001")).toMatchObject({ Status: "Stale status", Person: "Stale person" });
+    expect(claimsTab(h.ss).notes).toHaveLength(1);
+  });
+
+  it("writes the note under the lock, then flushes, clears the cache and releases (the note is a write)", () => {
+    const h = harness(build(TWO));
+    h.edit(1, "Sold ");
+    const e = h.events;
+    expect(e.indexOf("write")).toBeGreaterThan(e.indexOf("waitLock"));
+    expect(e.indexOf("flush")).toBeGreaterThan(e.lastIndexOf("write"));
+    expect(e.indexOf(`cache:${CATALOGUE_CACHE_KEY}`)).toBeGreaterThan(e.lastIndexOf("write"));
+    expect(e.indexOf("releaseLock")).toBeGreaterThan(e.indexOf("flush"));
+    expect(e.filter((x) => x === "releaseLock")).toHaveLength(1);
+  });
+
+  it("writes no note when the lock cannot be taken (busy)", () => {
+    const h = harness(build(TWO), { lock: { waitLock: () => { throw new Error("timeout"); }, releaseLock: () => {} } });
+    expect(h.edit(1, "Sold ")).toEqual({ handled: false, error: "busy" });
+    expect(claimsTab(h.ss).notes).toEqual([]);
+    expect(h.events).not.toContain("write");
+  });
+
+  it("removes the note when the seller then picks a valid State (whose oldValue is the typo)", () => {
+    const h = harness(build(TWO));
+    h.edit(1, "Sold ");
+    expect(noteOf(h.ss, 1)).toBe(NOT_A_STATE);
+    const r = h.edit(1, "sold", { oldValue: "Sold " });
+    expect(r).toEqual({ handled: true, reverted: false });
+    expect(noteOf(h.ss, 1)).toBeNull();
+    expect(stateOf(h.ss, 1)).toBe("sold");
+  });
+
+  it("leaves a different, valid State cell alone: a typo on claim 1 puts no note on claim 2", () => {
+    const h = harness(build(TWO));
+    h.edit(1, "Sold ");
+    expect(noteOf(h.ss, 2)).toBeNull();
+  });
+});
+
+describe("recalculateAll: typo'd State cells (QA F3)", () => {
+  const SEED = [{ id: 1, item: "I-0001", state: "Sold " }, { id: 2, item: "I-0001" }, { id: 3, item: "I-0002", state: "Released" }];
+
+  it("notes every typo'd State cell it sees", () => {
+    const h = harness(build(SEED));
+    h.recalc();
+    expect(noteOf(h.ss, 1)).toBe(NOT_A_STATE);
+    expect(noteOf(h.ss, 3)).toBe(NOT_A_STATE);
+    expect(noteOf(h.ss, 2)).toBeNull();
+  });
+
+  it("does not change the typo'd cell's value, and the rest of the repair still happens", () => {
+    const h = harness(build(SEED));
+    h.recalc();
+    expect(stateOf(h.ss, 1)).toBe("Sold ");
+    expect(stateOf(h.ss, 3)).toBe("Released");
+    expect(itemRow(h.ss, "Tech", "I-0001")).toMatchObject({ Status: "Reserved", Person: "Buyer 2" });
+  });
+
+  it("is stable: a second run writes nothing, notes included", () => {
+    const h = harness(build(SEED));
+    h.recalc();
+    const after = h.ss.snapshot();
+    h.events.length = 0;
+    h.recalc();
+    expect(h.ss.snapshot()).toBe(after);
+    expect(h.events).not.toContain("write");
+  });
+
+  it("clears the typo note once the cell holds a valid State, and leaves other notes (a refused-sale reason) alone", () => {
+    const h = harness(build(SEED));
+    h.recalc();
+    claimsTab(h.ss).grid[rowOfClaim(h.ss, 1) - 1]![STATE_COL - 1] = "sold"; // the seller fixes the typo
+    claimsTab(h.ss).setNote(rowOfClaim(h.ss, 2), STATE_COL, "Already sold: the last unit is gone"); // an unrelated note
+    h.recalc();
+    expect(noteOf(h.ss, 1)).toBeNull();
+    expect(noteOf(h.ss, 2)).toBe("Already sold: the last unit is gone");
+    expect(noteOf(h.ss, 3)).toBe(NOT_A_STATE); // still a typo
+  });
+
+  it("does not note blank-ID rows or valid States on a sheet with no typos", () => {
+    const h = harness(build([{ id: 1, item: "I-0001" }, { id: 2, item: "I-0001", state: "released" }]));
+    h.recalc();
+    expect(claimsTab(h.ss).notes).toEqual([]);
+  });
+});
+
+// ---- F4 (S3): a Number that Sheets stored as a number
+
+describe("Message link: a Number cell that holds a number (QA F4)", () => {
+  const NUM = Number(digits(2)); // 919000000012: what Sheets makes of a typed "+919000000012"
+
+  it("reads a numeric 12-digit 91... Number as +91..., so the link opens that buyer's chat (recalculateAll)", () => {
+    const h = harness(build([{ id: 1, item: "I-0001", number: NUM }]));
+    h.recalc();
+    const link = claimRow(h.ss, 1)["Message link"];
+    expect(blank(link)).toBe(false);
+    expect(wa(link).url.pathname).toBe(`/${digits(2)}`);
+    expect(wa(link).text).toContain(`${SITE}/#/b/${tokenOf(1)}`);
+  });
+
+  it("and after an edit of the item", () => {
+    const h = harness(build([{ id: 1, item: "I-0001" }, { id: 2, item: "I-0001", number: NUM }]));
+    h.edit(1, "released");
+    expect(wa(claimRow(h.ss, 2)["Message link"]).url.pathname).toBe(`/${digits(2)}`);
+  });
+
+  it("does not write the buyer's digits anywhere but the link path", () => {
+    const h = harness(build([{ id: 1, item: "I-0001", number: NUM }]));
+    h.recalc();
+    expect(wa(claimRow(h.ss, 1)["Message link"]).text).not.toContain(digits(2));
+  });
+
+  it("a numeric 10-digit Number still works (already supported)", () => {
+    const h = harness(build([{ id: 1, item: "I-0001", number: Number(digits(2).slice(2)) }]));
+    h.recalc();
+    expect(wa(claimRow(h.ss, 1)["Message link"]).url.pathname).toBe(`/${digits(2)}`);
+  });
+
+  it("does not guess at other numbers: a 12-digit number that does not start with 91, or an 11-digit one that does, gets no link", () => {
+    for (const bad of [Number(["44", "90000", "000", "12"].join("")), Number(["91", "90000", "00012"].join(""))]) {
+      const h = harness(build([{ id: 1, item: "I-0001", number: bad }]));
+      h.recalc();
+      expect(blank(claimRow(h.ss, 1)["Message link"]), String(bad)).toBe(true);
+    }
+  });
+
+  it("only a number cell is repaired: the same digits typed as text stay unlinked (normalisePhone is unchanged for text)", () => {
+    const h = harness(build([{ id: 1, item: "I-0001", number: digits(2) }]));
+    h.recalc();
+    expect(blank(claimRow(h.ss, 1)["Message link"])).toBe(true);
+  });
+});
+
+// ---- F5 (S4): which rows get a Message link, and what it says
+
+describe("Message link: wording by role and state (QA F5)", () => {
+  it("tells a waiter their place in line, never that they hold the item", () => {
+    const h = harness(build([{ id: 1, item: "I-0001" }, { id: 2, item: "I-0001" }, { id: 3, item: "I-0001" }]));
+    h.recalc();
+    const holder = wa(claimRow(h.ss, 1)["Message link"]).text, second = wa(claimRow(h.ss, 3)["Message link"]).text;
+    expect(holder).toContain("is reserved for you");
+    expect(second).toContain("You are 2nd in line");
+    expect(second).not.toContain("reserved for you");
+  });
+
+  it("a newline in the buyer's name cannot add lines to the message", () => {
+    const h = harness(build([{ id: 1, item: "I-0001", name: "Asha\nTest\r\nPerson" }]));
+    h.recalc();
+    const text = wa(claimRow(h.ss, 1)["Message link"]).text;
+    expect(text.split("\n")[0]).toBe("Hi Asha Test Person!");
+    expect(text.split("\n")).toHaveLength(4);
+  });
+
+  it("clears the link of a sold or released row, whatever was there, on a recalculation and on an edit", () => {
+    const stale = "https://wa.me/1?text=stale";
+    const h = harness(build([
+      { id: 1, item: "I-0001", state: "sold", soldPrice: 2500, soldAt: STAMP, link: stale },
+      { id: 2, item: "I-0002", state: "released", link: stale }, { id: 3, item: "I-0002", link: stale },
+    ]));
+    h.recalc();
+    expect(blank(claimRow(h.ss, 1)["Message link"])).toBe(true);
+    expect(blank(claimRow(h.ss, 2)["Message link"])).toBe(true);
+    expect(blank(claimRow(h.ss, 3)["Message link"])).toBe(false);
+    h.edit(3, "released");
+    expect(blank(claimRow(h.ss, 3)["Message link"])).toBe(true);
+  });
+});
+
+// ---- Coverage gaps from the QA report
+
+describe("stability and ordering (QA coverage gaps)", () => {
+  it("a name guarded with an apostrophe is not rewritten when Sheets reads it back without the apostrophe", () => {
+    const ss = build([{ id: 1, item: "I-0001", name: "=Evil()" }, { id: 2, item: "I-0001", name: "+Other" }]);
+    const h = harness(ss);
+    h.recalc();
+    expect(itemRow(ss, "Tech", "I-0001").Person).toBe("'=Evil()"); // stored with the guard
+    for (const t of ss.tabs) (t as FakeTab).dropApostrophes = true; // from now on, read like real Sheets
+    expect(itemRow(ss, "Tech", "I-0001").Person).toBe("=Evil()"); // premise of the test: the fake now drops it
+    h.events.length = 0;
+    const after = ss.snapshot();
+    h.recalc();
+    expect(h.events).not.toContain("write");
+    expect(ss.snapshot()).toBe(after);
+  });
+
+  it("recalculateAll keeps an existing Sold at, even when the clock has moved on", () => {
+    const h = harness(build([{ id: 1, item: "I-0001", state: "sold", soldPrice: 2500, soldAt: STAMP }]), { now: () => LATER });
+    h.recalc();
+    expect(claimRow(h.ss, 1)["Sold at"]).toBe(STAMP);
+  });
+
+  it("an edit elsewhere on the item keeps an existing Sold at", () => {
+    const h = harness(build([{ id: 1, item: "I-0002", state: "sold", soldPrice: 200, soldAt: STAMP }, { id: 2, item: "I-0002" }]), { now: () => LATER });
+    h.edit(2, "released");
+    expect(claimRow(h.ss, 1)["Sold at"]).toBe(STAMP);
+  });
+
+  it("a Promoted at that reads back as a Date is left as it is by recalculateAll and by an edit (no rewrite, Notified kept)", () => {
+    const h = harness(build([{ id: 1, item: "I-0001", promoted: new Date(STAMP), notified: true }, { id: 2, item: "I-0001" }]));
+    const col = CLAIM_HEADERS.indexOf("Promoted at");
+    const cell = () => claimsTab(h.ss).grid[rowOfClaim(h.ss, 1) - 1]![col];
+    const original = cell();
+    expect(original).toBeInstanceOf(Date);
+    h.recalc();
+    h.edit(2, "released");
+    expect(cell()).toBe(original); // the very same Date object: never rewritten
+    expect(claimRow(h.ss, 1).Notified).toBe(true);
+    expect(stamp(h.ss, 2)).toBeNull();
+  });
+
+  it("Person follows Claim ID order on a sorted Claims tab (recalculateAll and an edit)", () => {
+    const seedClaims = [{ id: 1, item: "I-0002" }, { id: 2, item: "I-0002" }, { id: 3, item: "I-0002" }];
+    for (const how of ["recalc", "edit"] as const) {
+      const ss = build([...seedClaims, { id: 4, item: "I-0001" }]);
+      const t = claimsTab(ss);
+      t.grid = [t.grid[0]!, ...t.grid.slice(1).reverse()]; // Z to A
+      const h = harness(ss);
+      if (how === "recalc") h.recalc(); else h.edit(4, "released");
+      expect(itemRow(ss, "Tech", "I-0002").Person, how).toBe(how === "recalc" ? "Buyer 1, Buyer 2, Buyer 3" : "Stale person");
+      if (how === "edit") { h.edit(2, "released"); expect(itemRow(ss, "Tech", "I-0002").Person).toBe("Buyer 1, Buyer 3"); }
+    }
+  });
+
+  it("a formula-like name that is not first in Person is still written as inert text; each name is guarded once, not per name", () => {
+    const h = harness(build([
+      { id: 1, item: "I-0002", name: "Asha" }, { id: 2, item: "I-0002", name: "=EVIL()" }, { id: 3, item: "I-0002", name: "@evil" },
+    ]));
+    h.recalc();
+    const person = String(itemRow(h.ss, "Tech", "I-0002").Person);
+    expect(person).toBe("Asha, =EVIL(), @evil"); // starts with a letter, so it cannot run; no apostrophe inside
+    expect(h.ss.tabs.flatMap((t) => t.writtenStrings).filter((s) => /^[=+\-@]/.test(s))).toEqual([]);
+    const h2 = harness(build([{ id: 1, item: "I-0002", name: "=A" }, { id: 2, item: "I-0002", name: "=B" }]));
+    h2.recalc();
+    expect(itemRow(h2.ss, "Tech", "I-0002").Person).toBe("'=A, =B"); // one guard on the whole text
+  });
+
+  it("waits for the lock for the documented 30 seconds, on an edit and on the timed job", () => {
+    const asked: number[] = [];
+    const lock = { waitLock: (ms: number) => { asked.push(ms); }, releaseLock: () => {} };
+    const h = harness(build([{ id: 1, item: "I-0001" }, { id: 2, item: "I-0001" }]), { lock });
+    h.edit(1, "released");
+    h.recalc();
+    expect(asked).toEqual([30_000, 30_000]);
   });
 });
