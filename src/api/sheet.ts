@@ -25,6 +25,11 @@ export interface Tab {
   setNote(row: number, col: number, text: string): void;
   /** The note on a cell, or null when it has none (S-15 QA F3: tell our own note from the seller's). */
   getNote(row: number, col: number): string | null;
+  /**
+   * One batch read of the notes in a column (Range.getNotes() in Apps Script), so a long tab costs one call, not one per
+   * row (S-14 F7). Index 0 is row 1, lining up with getGrid(); null where a cell has no note ("" from Sheets counts as none).
+   */
+  getNotes(col: number): (string | null)[];
   getComments(): { row: number; col: number }[];
   /** Removes every comment; returns how many were removed. */
   clearComments(): number;

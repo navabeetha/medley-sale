@@ -31,6 +31,23 @@ export interface SellerDeps {
 export const CLAIMS = "Claims";
 /** The note on a State cell that holds something else (S-15 QA F3). Only this exact text is ever cleared as ours. */
 export const NOT_A_STATE = "Not a valid state — choose active, released or sold";
+/** S-14 F8: the note on a State cell that is empty on a row with a Claim ID. A different problem from a typo, so different words. */
+export const BLANK_STATE = "This State cell is empty — choose active, released or sold";
+/**
+ * S-14 F10: the wording of canMarkSold's refusals (src/domain/queue.ts), which on-edit leaves in a note when it puts a
+ * sale back. Kept here as patterns, because the numbers in them vary. If queue.ts rewords a reason, update this list
+ * (the F10 test for a refused oversell fails if they drift apart).
+ */
+const REFUSAL_NOTES = [
+  /^That reservation could not be found for this item\.$/,
+  /^Only an active reservation can be marked sold \(this one is \w+\)\.$/,
+  /^This item's quantity isn't a whole number\. Fix the Quantity cell first\.$/,
+  /^This item has no units to sell\. Set a quantity first\.$/,
+  /^All \d+ units? (?:is|are) already sold\. Undo another sale first\.$/,
+];
+/** Notes WE write on a State cell and may therefore remove on an accepted edit; anything else is the seller's own. */
+export const isOurStateNote = (note: string | null): boolean =>
+  note !== null && (note === NOT_A_STATE || note === BLANK_STATE || REFUSAL_NOTES.some((p) => p.test(note)));
 const BOOKINGS = "Bookings";
 /** A trigger may wait for a reserve in progress; under the lock the work takes well under a second. */
 const LOCK_WAIT_MS = 30_000;
@@ -95,7 +112,7 @@ export interface ClaimsSheet {
 }
 
 const CLAIM_COLUMNS = [
-  "Claim ID", "Booking ID", "Item ID", "Name", "Number", "State", "Promoted at", "Notified", "Sold price", "Sold at", "Message link",
+  "Claim ID", "Booking ID", "Item ID", "Name", "Number", "State", "Promoted at", "Notified", "Sold price", "Sold at", "Ended at", "Message link",
 ] as const;
 
 export function claimColumns(tab: Tab): Record<string, number> {
@@ -301,22 +318,27 @@ export function applyItem(sh: Shared, item: ItemRow, previousRoles: Map<number, 
 // ---- Typo'd State cells (QA F3)
 
 /**
- * Keeps NOT_A_STATE notes true: set on every non-blank State that is not active / released / sold on a
- * row with a Claim ID (readClaims drops those rows, so this reads the RAW grid), cleared where the cell
- * has become valid. Any other note is left alone, and a cell already right is not written (stable runs).
+ * Keeps our State-cell notes true on every row with a Claim ID (readClaims drops the bad ones, so this reads the RAW
+ * grid): NOT_A_STATE on a State that is not active / released / sold, BLANK_STATE on an empty one (F8), nothing on a
+ * valid one, where either note of ours is cleared. Any other note is left alone, and a cell already right is not
+ * written (stable runs). The notes come from ONE getNotes call (F7): this runs under the lock, and a read per row
+ * would hold it long enough for a concurrent reserve to answer "busy".
  */
 export function syncStateNotes(tab: Tab, markWrote: () => void): void {
   const grid = tab.getGrid();
   const head = grid[0] ?? [];
   const idCol = colOf(head, "Claim ID"), stateCol = colOf(head, "State");
   if (!idCol || !stateCol) return;
+  const notes = tab.getNotes(stateCol);
   grid.slice(1).forEach((r, i) => {
     const row = i + 2;
     const state = text(r[stateCol - 1]);
-    const typo = state !== null && state !== "active" && state !== "released" && state !== "sold" && text(r[idCol - 1]) !== null;
-    const note = tab.getNote(row, stateCol);
-    if (typo && note !== NOT_A_STATE) { markWrote(); tab.setNote(row, stateCol, NOT_A_STATE); }
-    else if (!typo && note === NOT_A_STATE) { markWrote(); tab.setNote(row, stateCol, ""); } // fixed or emptied
+    const hasId = text(r[idCol - 1]) !== null;
+    const valid = state === "active" || state === "released" || state === "sold";
+    const want = !hasId || valid ? null : state === null ? BLANK_STATE : NOT_A_STATE;
+    const note = notes[row - 1] ?? null;
+    if (want !== null && note !== want) { markWrote(); tab.setNote(row, stateCol, want); }
+    else if (want === null && (note === NOT_A_STATE || note === BLANK_STATE)) { markWrote(); tab.setNote(row, stateCol, ""); } // fixed, or no longer a claim row
   });
 }
 

@@ -50,6 +50,12 @@ class SheetTab implements Tab {
   getNote(row: number, col: number): string | null {
     return this.sheet.getRange(row, col).getNote() || null;
   }
+  getNotes(col: number): (string | null)[] {
+    const rows = this.sheet.getLastRow();
+    if (rows === 0) return [];
+    // One call for the whole column; Sheets gives "" for no note, which the interface calls null.
+    return this.sheet.getRange(1, col, rows, 1).getNotes().map((r) => r[0] || null);
+  }
   getComments(): { row: number; col: number }[] {
     const out: { row: number; col: number }[] = [];
     this.fullRange().getNotes().forEach((r, i) =>
