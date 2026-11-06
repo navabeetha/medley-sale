@@ -1521,3 +1521,61 @@ Still needs a real device: the earlier list, plus a check on iOS Safari and Andr
 - `SITE_URL` and the web-app version are set before the test.
 
 **Verdict: SIGN-OFF.** F1–F4, F6, F7 and F9 are fixed and pinned. R1 (S3) should get a failing test and its one-line fix before G1. R2–R4 are S4s for the PM. F5 (S-13) and F8 (S-10) are carried as recorded.
+
+## 2026-11-06: S-10 reservation form (branch S-10-reservation-form, commits 3e330c6 red, 60d6080 PM decisions, f1cc164 green), plus B1 to B3
+
+**What changed:** a reservation screen at `#/reserve`, shown only in reserving mode. It lists the basket entries with Remove and a likely outcome. It has name and number fields (type tel, autocomplete name and tel), the 6.4 notice, a honeypot, and a remembered-details option with a clear button. Submit sends a text/plain JSON POST per the S-11 contract and maps each error code to plain copy. The idempotency key is kept in sessionStorage until a booking succeeds. On success the basket is cleared and the hash becomes `#/b/<token>` (S-12 builds that page). Also fixed: B1 (bar on a short page), B2 (15 cap on the live merge), B3 (stale counts no longer lowered in storage).
+
+**Verdict: SIGN-OFF**, on the condition that F1 and F2 are fixed before G1, and that S-12 ships before buyers see reserving mode (F3). There are no S1 or S2 defects.
+
+### Gate (fresh run, each step on its own)
+- typecheck exit 0. eslint clean.
+- Vitest: 37 files, 1076 passed.
+- Playwright (fresh build, 4 projects): 928 passed, 4 skipped. The skips are the same WebKit CLS tests as before.
+- Size 8.9 KB of 50 KB. pii-scan 0 findings.
+- Red then green: 3e330c6 adds only tests, 60d6080 only the story file, f1cc164 only `src/` and `public/`.
+
+### Verified (mocked API, synthetic data, Chromium and WebKit, 390 and 320 px)
+- Every error code shows plain copy in the right place. Field errors sit beside the field and focus it; form errors are a role=alert box. Typed input is kept. A server error string or markup is never echoed. `{error:"unavailable"}` and a network failure show the shared try-again line.
+- The key is reused after every failure, including after a reload following a network failure (same key on the retry). A new key appears only after `invalid-request`.
+- Five fast Enter presses plus a click send one request.
+- The request is a POST to the API URL with no query string, `text/plain;charset=utf-8`, and no preflight seen.
+- After success: the token is only in the hash and in the value of one fixed sessionStorage key. No storage key name contains it. This fits D-005, which expects the browser to remember bookings.
+- R1 mode (`reserving` false or missing): the screenshot and DOM are identical to the pre-S-09 R1 build, also when the page is opened at `#/reserve`.
+- B1: on a 2-item page the bar's bottom is at the viewport bottom at 390 and 320 px, main keeps its full width, and nothing scrolls sideways. B2 and B3 are covered by the 9 new e2e tests, which pass.
+- Implementer's unforced choices, judged:
+  - The key is 16 bytes from `getRandomValues` as hex: fine (128 bits, matches the pattern).
+  - Remembered number shown as E.164: fine.
+  - Last booking in sessionStorage: fine.
+  - Shared try-again copy: fine.
+  - Form kept in memory while away: fine.
+  - `#/b/<token>` shows the catalogue for now: see F3.
+
+### Findings (worst first)
+**F1, S3: the live list arriving while the buyer types on the form takes focus away** (on a phone this closes the keyboard). Cause: `route()` calls `reserve.open()`, whose `root.replaceChildren` detaches the focused input. Repro: with a cached list and a 2.5 s live response, tap Reserve, then type in the name field. Focus goes to `<body>` when live arrives; the typed text stays. A reload on `#/reserve` does the same. This is the common path on a cold start (about 13 s). Fix: in `open()`, rebuild only when the screen is not already shown, and otherwise just `render()` the list. Start with a failing e2e.
+
+**F2, S3: items added while a booking is pending are wiped on success, though they were never booked.** The pending form also allows Remove. Repro 1: submit with a 2 s answer, go Back, add another item (`Reserve (2)`). On success the basket is empty and only the first item was sent. Repro 2: Remove an entry while pending; the request already includes it, so it is booked if the answer is a success. Fix: on success, remove only the entries that were sent, and disable Remove (or the whole list) while pending.
+
+**F3, release note for the PM (S3 if shipped alone): a successful booking shows no confirmation until S-12.** The site lands on the catalogue with an empty basket. A buyer may think it failed and book again, which uses a new key and so makes a second booking. Keep reserving mode away from buyers until S-12 is in; staging is fine.
+
+**F4, S4: the screen change doesn't manage focus or scroll.** After Reserve, and after Back, focus is on `<body>`. Back also returns to the top of the catalogue (857 px to 0), so the buyer loses their place. Fix: give the h2 tabindex -1 and focus it on open; on Back, restore the catalogue's scroll and focus the bar's Reserve link.
+
+**F5, S4 likelihood but serious if it happens: a filled honeypot makes a real buyer believe they booked.** The API answers a filled honeypot with a normal-looking success and saves nothing, and the site then clears the basket. The markup follows S-11: unlabelled, an unusual name, autocomplete off, off screen, aria-hidden, tabindex -1. From known browser behaviour, Chrome and Safari autofill classify fields by name, id, label and autocomplete, so this field should not be filled. Form-filling extensions and some password managers fill unclassified text fields, though. Needs a real-device check (below). Optional hardening for the API track: log honeypot hits so the seller can spot a real buyer caught by it.
+
+### Coverage gaps (no test would go red)
+- F1 (a live render while the form has focus) and F2 (basket changes while pending).
+- Focus on entering and leaving the screen.
+- The key surviving a reload after a failure (checked here by hand only).
+- The 30 s timeout was not run in real time here; e2e covers the pending-then-try-again path.
+
+### Manual checks still needed (real device)
+- Android Chrome and iOS Safari, with saved contact autofill on: tap the name field, accept the autofill suggestion, then confirm in the request (staging) that `website` is empty. Repeat with one common password manager.
+- On the iPhone, the keyboard's "Go" submits once. The keyboard type for the tel field shows digits plus `+`.
+- VoiceOver and TalkBack: the field errors are read with their fields, and the form-level alert is announced.
+
+### Not examined
+- The real staging API (CORS and redirect behaviour of a real POST).
+- Two tabs booking at once.
+- The S-12 booking page (not built yet).
+
+**Screenshot:** `docs/qa/screenshots/S-10-form-390.png` (iPhone 14 profile, synthetic data, the "add a +" number error showing).
