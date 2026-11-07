@@ -32,11 +32,11 @@ test.describe("not-found removes the token", () => {
     await expect(t(page, "my-reservations")).toHaveCount(0);
   });
 
-  test("the catalogue link then points at the newest remaining booking", async ({ page }) => {
+  test("the catalogue link is still there, going to #/mine, while a booking remains", async ({ page }) => {
     await visit(page, [TOKEN, OTHER_TOKEN], (r) => json({ ok: false, error: "not-found" })(r));
     await expect(t(page, "booking-notfound")).toBeVisible();
     await t(page, "booking-back").click();
-    await expect(t(page, "my-reservations")).toHaveAttribute("href", `#/b/${OTHER_TOKEN}`);
+    await expect(t(page, "my-reservations")).toHaveAttribute("href", "#/mine"); // S-19
   });
 
   test("a token that was never saved changes nothing (a mistyped link does not touch the list)", async ({ page }) => {
