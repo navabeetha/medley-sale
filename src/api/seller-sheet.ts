@@ -91,6 +91,8 @@ export interface ClaimRow {
   notified: CellValue | undefined;
   soldPrice: CellValue | undefined;
   soldAt: CellValue | undefined;
+  /** Set with State "released" only by a buyer's own back-out (G1); null when blank or the column is missing. */
+  endedAt: string | null;
   link: CellValue | undefined;
 }
 
@@ -128,7 +130,9 @@ export function readClaims(tab: Tab): ClaimsSheet {
       name: unguard(text(at("Name")) ?? ""),
       number: numberText(at("Number")), // F4: a numeric cell is +91...
       promotedAt: promoted instanceof Date ? promoted.toISOString() : text(promoted),
-      notified: at("Notified"), soldPrice: at("Sold price"), soldAt: at("Sold at"), link: at("Message link"),
+      notified: at("Notified"), soldPrice: at("Sold price"), soldAt: at("Sold at"),
+      endedAt: at("Ended at") instanceof Date ? (at("Ended at") as Date).toISOString() : text(at("Ended at")),
+      link: at("Message link"),
     });
   });
   return { tab, col, rows };

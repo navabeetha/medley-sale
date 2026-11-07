@@ -129,3 +129,22 @@ export function buildSellerMessage(buyerName: string, unit: MessageUnit, siteUrl
     : `You are ${ordinal(unit.position ?? 1)} in line for ${title(unit)}${price}.`;
   return [`Hi ${flatten(buyerName)}!`, what, "", `Change or back out: ${siteUrl.replace(/\/+$/, "")}/#/b/${token}`].join("\n");
 }
+
+/**
+ * The buyer's note to the seller about items they backed out of (G1): `${base}?text=<message>` under 2,000 characters.
+ * Buyer's voice, no number, token or private link (D-011). One bullet per item; too long, the last bullets are dropped
+ * and "…and N more" says how many. Whole lines only, so the URL never ends mid-escape.
+ */
+export function buildBackedOutUrl(base: string, buyerName: string, units: MessageUnit[]): string {
+  const hi = `Hi! I'm ${flatten(buyerName)}.`;
+  const names = units.map(title);
+  let keep = names.length;
+  for (;;) {
+    const text = keep === 1 && names.length === 1
+      ? `${hi} I've backed out of ${names[0]}.`
+      : [`${hi} I've backed out of:`, ...names.slice(0, keep).map((n) => `• ${n}`), ...(keep < names.length ? [`…and ${names.length - keep} more`] : [])].join("\n");
+    const url = `${base}?text=${encodeURIComponent(text)}`;
+    if (url.length < URL_LIMIT || keep <= 1) return url;
+    keep--;
+  }
+}

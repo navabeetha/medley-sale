@@ -13,7 +13,7 @@ import { colOf } from "./migrate";
 import { CLAIMS, readClaims, readItems, toInput, itemInput, type ClaimRow, type ItemRow } from "./seller-sheet";
 import type { Spreadsheet } from "./sheet";
 import { cleanSiteUrl } from "./site-url";
-import { buildWhatsappUrl, type MessageUnit } from "../domain/message";
+import { buildBackedOutUrl, buildWhatsappUrl, type MessageUnit } from "../domain/message";
 import { recalculate, type ClaimResult } from "../domain/queue";
 
 export interface BookingDeps {
@@ -53,7 +53,7 @@ export type BookingView = {
   ended: Line[];
 };
 export type BookingResponse =
-  | { ok: true; booking: BookingView; whatsappUrl: string | null }
+  | { ok: true; booking: BookingView; whatsappUrl: string | null; backedOutUrl: string | null }
   | { ok: false; error: "not-found" | "not-reserving" };
 
 const BOOKINGS = "Bookings";
@@ -140,5 +140,14 @@ export function booking(ss: Spreadsheet, request: unknown, deps: BookingDeps): B
     };
     whatsappUrl = buildWhatsappUrl(base, found.name, [...holding, ...waitingClaims].map(unit), siteUrl, token as string);
   }
-  return { ok: true, booking: view, whatsappUrl };
+
+  // The buyer's note about what they backed out of: State released WITH an Ended at (a seller's hand release has none).
+  const backedOut = group(mine.filter((c) => c.state === "released" && c.endedAt !== null), items);
+  const backedOutUrl = base && backedOut.length > 0
+    ? buildBackedOutUrl(base, found.name, backedOut.map((l): MessageUnit => {
+      const item = items.get(l.itemId)!;
+      return { itemId: item.id, name: item.name, detail: item.detail, isBook: item.isBook, price: item.price, outcome: "holder", position: null };
+    }))
+    : null;
+  return { ok: true, booking: view, whatsappUrl, backedOutUrl };
 }
