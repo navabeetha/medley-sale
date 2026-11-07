@@ -4,6 +4,7 @@
 import { addIdColumns } from "../api/add-id-columns";
 import { backOut } from "../api/back-out";
 import { booking } from "../api/booking";
+import { mine } from "../api/mine";
 import { catalogue } from "../api/catalogue";
 import { CATALOGUE_CACHE_KEY, handleGet } from "../api/handle-get";
 import { handlePost } from "../api/handle-post";
@@ -117,6 +118,13 @@ export function doPostRun(e?: { postData?: { contents?: string } }): GoogleAppsS
     // S-12: read-only, so no lock and no cache. S-14: same lock, cache and clock as reserve.
     booking: (request) =>
       booking(activeSpreadsheet(), request, {
+        now: () => new Date().toISOString(),
+        sellerWhatsapp: props.getProperty("SELLER_WHATSAPP") ?? undefined,
+        siteUrl: props.getProperty("SITE_URL") ?? "",
+      }),
+    // S-19: read-only like booking, so no lock and no cache.
+    mine: (request) =>
+      mine(activeSpreadsheet(), request, {
         now: () => new Date().toISOString(),
         sellerWhatsapp: props.getProperty("SELLER_WHATSAPP") ?? undefined,
         siteUrl: props.getProperty("SITE_URL") ?? "",

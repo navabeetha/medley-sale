@@ -11,7 +11,7 @@ import { contactUrl } from "./catalogue";
 import { text, unguard, unapostrophe } from "./cell-text";
 import { colOf } from "./migrate";
 import { CLAIMS, readClaims, readItems, toInput, itemInput, type ClaimRow, type ItemRow } from "./seller-sheet";
-import type { Spreadsheet } from "./sheet";
+import type { Spreadsheet, Tab } from "./sheet";
 import { cleanSiteUrl } from "./site-url";
 import { buildBackedOutUrl, buildWhatsappUrl, type MessageUnit } from "../domain/message";
 import { recalculate, type ClaimResult } from "../domain/queue";
@@ -92,24 +92,33 @@ function group(claims: ClaimRow[], items: Map<string, ItemRow>): Line[] {
   return [...lines.values()];
 }
 
-export function booking(ss: Spreadsheet, request: unknown, deps: BookingDeps): BookingResponse {
-  const claimsTab = ss.getTab(CLAIMS);
-  if (!claimsTab || !ss.getTab(BOOKINGS)) return { ok: false, error: "not-reserving" }; // status mode (D-038.6)
-  const token = typeof request === "object" && request !== null && !Array.isArray(request) ? (request as { token?: unknown }).token : undefined;
-  const found = findBooking(ss, token);
-  if (!found) return NOT_FOUND;
+/** Every item and claim on the sheet with each claim's queue role, run read-only (previousRole null: nobody is stamped). */
+export interface Snapshot { items: Map<string, ItemRow>; all: ClaimRow[]; results: Map<number, ClaimResult> }
 
+export function snapshot(ss: Spreadsheet, claimsTab: Tab, now: string): Snapshot {
   const items = readItems(ss);
   const all = readClaims(claimsTab).rows.sort((a, b) => a.claimId - b.claimId);
-  const now = deps.now();
-  // Each item's queue, run read-only (previousRole null: nobody is stamped here).
   const results = new Map<number, ClaimResult>();
   for (const item of items.values()) {
     const own = all.filter((c) => c.itemId === item.id);
     if (own.length === 0) continue;
     for (const r of recalculate(itemInput(item), own.map((c) => toInput(c, null)), now).claims) results.set(r.claimId, r);
   }
+  return { items, all, results };
+}
 
+/** What one booking holds, waits for, bought and gave up, read from a snapshot (shared by booking and mine). */
+export interface BookingParts {
+  view: BookingView;
+  holding: ClaimRow[];
+  waitingClaims: ClaimRow[];
+  backedOut: Line[];
+  /** Message units for the held and waiting claims, in that order. */
+  activeUnits: MessageUnit[];
+}
+
+export function readBooking(snap: Snapshot, found: { id: number; name: string }): BookingParts {
+  const { items, all, results } = snap;
   const mine = all.filter((c) => c.bookingId === found.id && items.has(c.itemId));
   const roleOf = (c: ClaimRow) => results.get(c.claimId)!;
   const holding = mine.filter((c) => c.state === "active" && roleOf(c).role === "holder");
@@ -125,29 +134,44 @@ export function booking(ss: Spreadsheet, request: unknown, deps: BookingDeps): B
     sold: group(mine.filter((c) => c.state === "sold"), items),
     ended: group(mine.filter((c) => c.state === "released"), items),
   };
+  const activeUnits = [...holding, ...waitingClaims].map((c): MessageUnit => {
+    const item = items.get(c.itemId)!, r = roleOf(c);
+    return {
+      itemId: item.id, name: item.name, detail: item.detail, isBook: item.isBook, price: item.price,
+      outcome: r.role === "holder" ? "holder" : "waiting", position: r.position,
+    };
+  });
+  // The buyer's own back-outs: State released WITH an Ended at (a seller's hand release has none).
+  const backedOut = group(mine.filter((c) => c.state === "released" && c.endedAt !== null), items);
+  return { view, holding, waitingClaims, backedOut, activeUnits };
+}
+
+/** Message units for backed-out lines (outcome is unused by buildBackedOutUrl). */
+export function backedOutUnits(lines: Line[], items: Map<string, ItemRow>): MessageUnit[] {
+  return lines.map((l): MessageUnit => {
+    const item = items.get(l.itemId)!;
+    return { itemId: item.id, name: item.name, detail: item.detail, isBook: item.isBook, price: item.price, outcome: "holder", position: null };
+  });
+}
+
+export function booking(ss: Spreadsheet, request: unknown, deps: BookingDeps): BookingResponse {
+  const claimsTab = ss.getTab(CLAIMS);
+  if (!claimsTab || !ss.getTab(BOOKINGS)) return { ok: false, error: "not-reserving" }; // status mode (D-038.6)
+  const token = typeof request === "object" && request !== null && !Array.isArray(request) ? (request as { token?: unknown }).token : undefined;
+  const found = findBooking(ss, token);
+  if (!found) return NOT_FOUND;
+
+  const snap = snapshot(ss, claimsTab, deps.now());
+  const parts = readBooking(snap, found);
 
   // The buyer's message to the seller for what they hold or wait for now; sold and ended items are left out.
   const base = contactUrl(deps.sellerWhatsapp);
   const siteUrl = cleanSiteUrl(deps.siteUrl);
-  let whatsappUrl: string | null = null;
-  if (base && siteUrl && (holding.length > 0 || waitingClaims.length > 0)) {
-    const unit = (c: ClaimRow): MessageUnit => {
-      const item = items.get(c.itemId)!, r = roleOf(c);
-      return {
-        itemId: item.id, name: item.name, detail: item.detail, isBook: item.isBook, price: item.price,
-        outcome: r.role === "holder" ? "holder" : "waiting", position: r.position,
-      };
-    };
-    whatsappUrl = buildWhatsappUrl(base, found.name, [...holding, ...waitingClaims].map(unit), siteUrl, token as string);
-  }
-
-  // The buyer's note about what they backed out of: State released WITH an Ended at (a seller's hand release has none).
-  const backedOut = group(mine.filter((c) => c.state === "released" && c.endedAt !== null), items);
-  const backedOutUrl = base && backedOut.length > 0
-    ? buildBackedOutUrl(base, found.name, backedOut.map((l): MessageUnit => {
-      const item = items.get(l.itemId)!;
-      return { itemId: item.id, name: item.name, detail: item.detail, isBook: item.isBook, price: item.price, outcome: "holder", position: null };
-    }))
+  const whatsappUrl = base && siteUrl && parts.activeUnits.length > 0
+    ? buildWhatsappUrl(base, found.name, parts.activeUnits, siteUrl, token as string)
     : null;
-  return { ok: true, booking: view, whatsappUrl, backedOutUrl };
+  const backedOutUrl = base && parts.backedOut.length > 0
+    ? buildBackedOutUrl(base, found.name, backedOutUnits(parts.backedOut, snap.items))
+    : null;
+  return { ok: true, booking: parts.view, whatsappUrl, backedOutUrl };
 }

@@ -11,6 +11,8 @@ export interface PostDeps {
   backOut: (request: unknown) => unknown;
   /** S-13: record that the buyer's browser went to WhatsApp, by token in the body. */
   waOpened: (request: unknown) => unknown;
+  /** S-19: read-only merged view of every booking saved on a device, by tokens in the body. */
+  mine: (request: unknown) => unknown;
 }
 
 export function handlePost(body: string | undefined, deps: PostDeps): string {
@@ -23,13 +25,14 @@ export function handlePost(body: string | undefined, deps: PostDeps): string {
   if (typeof request !== "object" || request === null || Array.isArray(request)) {
     return JSON.stringify({ error: "bad request" });
   }
-  // Exactly "reserve", "booking", "backOut" or "waOpened": no trimming or case folding, and the action is never echoed back.
+  // Exactly "reserve", "booking", "backOut", "waOpened" or "mine": no trimming or case folding, and the action is never echoed back.
   // Tokens come from this POST body only; doGet never routes these.
   const action = (request as { action?: unknown }).action;
   const handler = action === "reserve" ? deps.reserve
     : action === "booking" ? deps.booking
     : action === "backOut" ? deps.backOut
     : action === "waOpened" ? deps.waOpened
+    : action === "mine" ? deps.mine
     : null;
   if (!handler) return JSON.stringify({ error: "unknown action" });
   try {
