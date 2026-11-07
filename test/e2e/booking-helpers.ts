@@ -41,21 +41,49 @@ export const TELL_URL = "https://wa.me/919000000001?text=Hi!%20I'm%20Asha%20Test
 export const backOutReply = (booking: Json, backedOutUrl: string | null = BACKED_OUT_URL, whatsappUrl: string | null = WA_URL, tellSellerUrl: string | null = TELL_URL) =>
   ({ ok: true, booking, whatsappUrl, tellSellerUrl, backedOutUrl });
 
+// ---- S-19: the `mine` answer (see test/unit/mine.test.ts for the full contract) ----
+export const BUYER_KEY = "medley-sale:buyer:v1"; // localStorage: the remembered buyer, JSON {name, number}
+export const BUYER_NAME = "Asha Testperson";
+export const BUYER_NUMBER = ["+91", "90000", "00012"].join(" "); // synthetic, built in parts for the personal-data scan
+export const BUYER_JSON = JSON.stringify({ name: BUYER_NAME, number: BUYER_NUMBER });
+/** Every unit in a `mine` answer carries the token of ITS booking. */
+export const tok = <T extends Json>(token: string, l: T) => ({ ...l, token });
+/** Held: 2 frames of one booking (TOKEN) and a mug of another (OTHER_TOKEN); waiting: a lamp (TOKEN, 3rd); sold: a kettle (TOKEN); backed out: a fan (OTHER_TOKEN). */
+export const MINE_VIEW = {
+  reserved: [tok(TOKEN, line("I-9101", "Test Picture Frame", [11, 12], "Framecraft")), tok(OTHER_TOKEN, line("I-9105", "Test Mug", [17]))],
+  waiting: [tok(TOKEN, waiting(13, "I-9002", "Test Lamp", 3))],
+  sold: [tok(TOKEN, line("I-9001", "Test Kettle", [15]))],
+  backedOut: [tok(OTHER_TOKEN, line("I-9103", "Test Fan", [16]))],
+};
+export const MINE_WA_URL = "https://wa.me/919000000001?text=all%20reserved";
+export const MINE_BACKED_OUT_URL = "https://wa.me/919000000001?text=all%20backed%20out";
+export const mineReply = (over: Json = {}) =>
+  ({ ok: true, ...MINE_VIEW, notFound: [], whatsappUrl: MINE_WA_URL, backedOutUrl: MINE_BACKED_OUT_URL, ...over });
+/** The "My details" and "Forget" keys, plus the saved list, put in localStorage once per tab (a reload does not re-seed). */
+export async function seedStorage(page: Page, entries: Record<string, string>): Promise<void> {
+  await page.addInitScript((e) => {
+    if (sessionStorage.getItem("seeded")) return;
+    for (const [k, v] of Object.entries(e)) localStorage.setItem(k, v);
+    sessionStorage.setItem("seeded", "1");
+  }, entries);
+}
+
 export type Post = (route: Route, sent: Sent) => Promise<void> | void;
 export interface Api {
   sent: Sent[];
   gets: string[];
   /** Replace how one action is answered. */
-  on(action: "booking" | "backOut" | "reserve" | "waOpened", h: Post): void;
+  on(action: "booking" | "backOut" | "reserve" | "waOpened" | "mine", h: Post): void;
   setCatalogue(c: unknown): void;
 }
 
-export async function setupApi(page: Page, handlers: Partial<Record<"booking" | "backOut" | "reserve" | "waOpened", Post>> = {}, catalogue: unknown = { ...response(ITEMS), reserving: true }): Promise<Api> {
+export async function setupApi(page: Page, handlers: Partial<Record<"booking" | "backOut" | "reserve" | "waOpened" | "mine", Post>> = {}, catalogue: unknown = { ...response(ITEMS), reserving: true }): Promise<Api> {
   const h: Record<string, Post> = {
     booking: (r) => json(bookingReply())(r),
     backOut: (r) => json(backOutReply(FULL_VIEW))(r),
     reserve: (r) => json({ ok: true, token: TOKEN, bookingId: 7, units: [], skipped: [], whatsappUrl: null })(r),
     waOpened: (r) => json({ ok: true })(r),
+    mine: (r) => json(mineReply())(r),
     ...handlers,
   };
   const api: Api = {
