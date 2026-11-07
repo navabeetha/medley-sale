@@ -46,3 +46,12 @@ From the S-13 QA:
 
 From G1 (the seller, 2026-11-07):
 - A booking that no longer exists stays in My reservations (`medley-sale:bookings:v1`) forever, and the buyer can't remove it. When the booking API answers `not-found` for a saved token, drop that token from the list. Never drop it on a network error or `busy`. Test first.
+
+From the G1-fixes and S-19 QA (2026-11-07), to fix before go-live, test first:
+- **S3 F1:** the combined "Send the details" URL goes over 2,000 characters at about 14 or more active bookings, because link lines are never dropped. Fix: after the bullets, also drop link lines from the oldest booking and add "…and N more reservations". Pin it with 15 and 20 tokens.
+- **S3 F2:** on `#/mine`, a failed refresh after a successful back-out shows the load error. Fix: keep the redrawn units from the back-out reply and show a soft "couldn't refresh" note.
+- **S3 F3:** `#/mine` and `#/b/` route only after the catalogue draws, so a failed catalogue hides them. Fix: route them independently of the catalogue.
+- **S4 F4:** in R1/status mode, saved tokens leave the header link showing and `#/mine` stuck on a retry. Treat `not-reserving` as a plain "reserving isn't open" message and hide the link.
+- **S4 F5:** the two Back out buttons on a 2-unit line look identical. Show "(1 of 2)" visibly.
+- **Test hygiene:** the mine-layout FULL fixture repeats claim ids 11 and 12. Give it distinct ids, then key the confirmation by claim id alone and drop the `startRender` draw count.
+- **Uncaught mutants:** `onChanged()` after a back-out on `#/mine`, and the `if (backing) return` guard.

@@ -1916,3 +1916,53 @@ Killed: Q2 markWrote removed, timed Q1 guard removed, oldKnown oversell guard re
 - The real staging API (CORS, redirect, real booking/backOut answers); the API branch was QA'd separately.
 - VoiceOver/TalkBack announcement of the back-out alert.
 - Two tabs backing out of the same unit at once.
+
+## 2026-11-07: G1 fixes + S-19 one "My reservations" view at #/mine (branch G1-fixes; G1 red a4bf55a..ba84264, green bbd0c30 9f7afdf, PM test fix 0d91103; S-19 red d635ffe b92077b 65bab7a, green a70fa85 9d3d0e1), QA
+
+**Verdict: SIGN-OFF with S3 follow-ups** (no S1/S2; the findings below have workarounds and need a failing test first).
+
+### What changed
+- G1: "Backing out…" pending state with Yes and Cancel disabled; `backedOutUrl` on `booking` and `backOut` (buyer-voice "I've backed out of…" message, no token or link); details link placed after Reserved/Waiting; not-found tokens dropped from `medley-sale:bookings:v1`.
+- S-19: new read-only API action `mine` (`src/api/mine.ts`, routed in handle-post, wired in appscript main); `booking.ts` split into `findBooking`/`snapshot`/`readBooking`/`backedOutUnits`; `buildCombinedWhatsappUrl` in domain/message; new site page `#/mine` (`mine-page.ts`), shared back-out widget (`backout-unit.ts`), buyer storage (`buyer.ts`); header link is now one link to `#/mine`; Forget moved from the reserve form to My details.
+
+### Verified
+- Gate `npm ci && npm run check` (fresh, exit 0): tsc both projects clean, eslint clean, Vitest 57 files / 1526 tests passed, Playwright 1576 passed / 4 skipped (Chromium-only CLS test on WebKit), size 24.1 KB of 50 KB gzipped, pii-scan 276 files 0 findings.
+- Code read: `mine` validates 1-20 non-empty strings before any sheet read and without lock; unknown tokens only echoed in `notFound`; units tagged only with the token that was sent; no booking id/name/number in sections. No `URL`/`URLSearchParams`/`TextEncoder`/`crypto`/`structuredClone` in src/api or src/domain (grep; only comments). No `innerHTML` in src/site.
+- Mutations (each reverted, tree clean afterwards). Caught: drop the 20 cap; drop the empty-string check; read the sheet before validation; tag every unit with the first token; buyer voice = last found; backedOut includes seller hand-release; `forgetBuyer` -> `localStorage.clear()`; Forget also removes bookings key; Yes not disabled while pending; notFound not dropped; `rel` removed; no 20-token slice client-side; `startRender()` removed (12 failures). NOT caught: see gaps.
+- Exploratory (temporary spec, deleted): double-tap Yes on #/mine sends one `backOut`; the catalogue is re-read after a #/mine back-out (GET count 1 -> 2); after Forget, localStorage holds only basket, catalogue, bookings and manifest keys (no buyer key; nothing personal added).
+- Message cap probe (domain functions run directly, synthetic 32-hex tokens and a github.io site URL): see F1. backedOutUrl with 60 multibyte/emoji names: 1,986 chars, decodes cleanly, "…and 41 more".
+- Screenshot: `docs/qa/screenshots/S-19-mine-390.png` (Chromium, Pixel profile at 390 px, synthetic MINE_VIEW: Reserved with 2 frames + mug + waiting lamp, Sold, Backed out, My details).
+
+### Findings (worst first)
+- **F1, S3: the combined "Send the details" URL breaks the 2,000-character cap when about 14 or more saved bookings have something active.** `buildCombinedWhatsappUrl` drops bullets but never link lines, and stops at keep=0. Measured: 12 bookings 1,989 chars (only 4 bullets left), 15 bookings 2,074, 20 bookings 2,739. Story AC 4 says "under the 2,000-character cap". Repro: `buildCombinedWhatsappUrl(base, "Asha", 15 units, site, 15 tokens)` -> length 2074. Unit test only uses 2 tokens. Rare in practice (each Reserve tap makes one booking) but reachable; needs a decision (e.g. cap link lines, or link to `#/mine`... which carries no token, so cannot help the seller) and a failing test.
+- **F2, S3: after a successful back-out on #/mine, a failed refetch shows "We couldn't load your reservations just now" (implementer concern b, confirmed).** Repro: `backOut` ok, second `mine` network-down -> `mine-error` with Try again; the back-out did happen (catalogue re-read). Workaround: Try again. Suggest keeping the old answer with the unit marked backed out, or a softer "Backed out. Couldn't refresh the list" note.
+- **F3, S3: #/mine (and #/b/) never route until the catalogue has drawn (concern c, confirmed; pre-existing for #/b/).** Repro: no catalogue cache, catalogue GET fails -> mine page stays hidden, zero `mine` POSTs, buyer sees the catalogue error. On a cold start the `mine` request also waits for the catalogue, so up to two cold-start waits in series.
+- **F4, S4: R1/status mode with saved tokens:** header link still shows, and #/mine shows the retryable error forever (`not-reserving` is treated as a failure). Carries S-12 F3. Browse-only `/` itself unchanged (no basket controls).
+- **F5, S4: the two Back out buttons for a 2-unit line look identical** ("(1 of 2)" is only in aria-label). Visible in the screenshot.
+- **F6, S4 (concern d): the combined message speaks as the newest found booking's name** even if older bookings used another name. Pinned as an assumption in mine.test.ts; acceptable for one buyer per device.
+
+### Judgements on implementer concerns
+- (a) Confirmation key `token/claim#nth` + `startRender()`: works and is well pinned (removing `startRender` fails 12 tests). The `#nth` part exists only because `mine-layout.spec.ts` FULL repeats TOKEN claims 11 and 12 in two lines, which the real API cannot return (claim ids are unique sheet-wide). Mutating the key to claim id alone passes every test. The fixture is unrealistic; prefer fixing the fixture (distinct claim ids) and simplifying the key to claim id. Not a bug.
+- (b) Real, F2. (c) Real, F3, pre-existing. (d) Acceptable, F6.
+
+### Coverage gaps (no test goes red)
+- Catalogue re-read after a back-out on #/mine (removing `onChanged()` passes all mine/back-out specs).
+- The `if (backing) return` guard in backout-unit (only the disabled button protects; removing the guard passes).
+- Combined URL cap with many tokens (F1).
+- Refetch failure after a successful back-out (F2); routing when the catalogue fails (F3); R1 + saved tokens on #/mine (F4).
+- `seenIds` dedupe in mine.ts (unreachable by design; harmless).
+
+### Manual checks for the seller (real phone, staging)
+1. Make two separate reservations, then tap My reservations -> one page with both, Reserved / Sold / Backed out / My details in that order.
+2. Back out one unit from #/mine on mobile data -> "Backing out…", then it moves to Backed out; Back to the sale shows the item free again.
+3. Double-tap Yes, back out quickly -> only one unit is backed out.
+4. Tap "Send the details" and "Tell the seller you backed out" -> WhatsApp opens with the right items (send to herself only); return -> page intact.
+5. Forget my details -> name and number disappear, the reservations stay; reload -> still listed; the reserve form starts empty.
+6. Safari Private mode: #/mine says no saved reservations, no crash.
+7. 320 px phone (or zoomed): no sideways scroll on #/mine with the confirmation open.
+
+### Not examined
+- Real staging API (CORS, cold start timing, real `mine` answers, Ended at column on the build copy).
+- VoiceOver/TalkBack announcements of the pending status and Forget focus.
+- WebKit for the exploratory probes and mutations (Chromium Pixel only; the gate covers all four profiles).
+- Two devices or tabs acting on the same booking at once.
