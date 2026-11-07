@@ -29,11 +29,17 @@ export const FULL_VIEW = {
   sold: [line("I-9001", "Test Kettle", [15])],
   ended: [line("I-9103", "Test Fan", [16])],
 };
-export const bookingReply = (booking: Json = FULL_VIEW, whatsappUrl: string | null = "https://wa.me/919000000001?text=x") =>
-  ({ ok: true, booking, whatsappUrl });
+export const WA_URL = "https://wa.me/919000000001?text=x";
+/** The G1 "tell the seller you backed out" link (booking().backedOutUrl): one message for everything backed out. */
+export const BACKED_OUT_URL = "https://wa.me/919000000001?text=Hi!%20I'm%20Asha%20Testperson.%20I've%20backed%20out%20of%20Test%20Fan.";
+export const bookingReply = (booking: Json = FULL_VIEW, whatsappUrl: string | null = WA_URL, backedOutUrl: string | null = null) =>
+  ({ ok: true, booking, whatsappUrl, backedOutUrl });
 export const TELL_URL = "https://wa.me/919000000001?text=Hi!%20I'm%20Asha%20Testperson.%20I've%20backed%20out%20of%20Test%20Picture%20Frame.";
-export const backOutReply = (booking: Json, tellSellerUrl: string | null = TELL_URL) =>
-  ({ ok: true, booking, whatsappUrl: null, tellSellerUrl });
+// Shape of the real backOut answer (src/api/back-out.ts): the booking, the UPDATED whatsappUrl (the real API does not answer
+// null while the buyer still holds or waits for something), the single-item tellSellerUrl (the page no longer uses it since
+// G1) and the booking's backedOutUrl (what the page uses for "Tell the seller you backed out").
+export const backOutReply = (booking: Json, backedOutUrl: string | null = BACKED_OUT_URL, whatsappUrl: string | null = WA_URL, tellSellerUrl: string | null = TELL_URL) =>
+  ({ ok: true, booking, whatsappUrl, tellSellerUrl, backedOutUrl });
 
 export type Post = (route: Route, sent: Sent) => Promise<void> | void;
 export interface Api {

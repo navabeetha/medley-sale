@@ -14,15 +14,16 @@
 //   Request     Yes sends POST {action:"backOut", token, claimId} (claimId a NUMBER, exactly these keys), text/plain,
 //               no query string. While pending "backout-yes" is disabled, so a double tap sends once.
 //   Success     the page redraws from the reply's `booking` (no other request needed); the confirmation closes.
-//               "tell-seller" appears: an <a> to the reply's tellSellerUrl, opening in a new tab (target _blank,
-//               rel with noopener), and only when tellSellerUrl is a non-null string. It is absent before a back-out.
+//               "tell-seller" (G1: now in the Ended section, see booking-layout.spec.ts) is an <a> to the reply's
+//               backedOutUrl (not tellSellerUrl), opening in a new tab (target _blank, rel noopener noreferrer), only
+//               when backedOutUrl is a wa.me string. It is absent when the booking has nothing backed out.
 //   Failure     {ok:false,...} or a network error: role="alert" "backout-error" in that unit, the units stay as
 //               they were, no "tell-seller"; the buyer can press Yes again.
 //   Catalogue   after a successful back-out the sale list shows the freed unit (a fresh catalogue is read).
 import { test, expect, type Page } from "@playwright/test";
 import { item, response } from "../fixtures/catalogue-fixture";
 import { hang, json, networkDown } from "./helpers";
-import { FULL_VIEW, TELL_URL, TOKEN, backOutReply, line, setupApi, waiting, type Api, type Json } from "./booking-helpers";
+import { BACKED_OUT_URL, FULL_VIEW, TOKEN, backOutReply, line, setupApi, waiting, type Api, type Json } from "./booking-helpers";
 
 const t = (p: Page, id: string) => p.getByTestId(id);
 const lineFor = (p: Page, group: string, name: string) =>
@@ -165,7 +166,7 @@ test.describe("Tell the seller", () => {
     await expect(t(page, "tell-seller")).toHaveCount(0);
   });
 
-  test("after a back-out it links to the reply's tellSellerUrl in a new tab, without being opened", async ({ page }) => {
+  test("after a back-out it links to the reply's backedOutUrl in a new tab, without being opened", async ({ page }) => {
     await open(page, { backOut: (r) => json(backOutReply(AFTER_ONE_FRAME))(r) });
     const popups: unknown[] = [];
     page.on("popup", (p) => popups.push(p));
@@ -174,14 +175,15 @@ test.describe("Tell the seller", () => {
     const a = t(page, "tell-seller");
     await expect(a).toBeVisible();
     await expect(a).toHaveText(/Tell the seller/i);
-    await expect(a).toHaveAttribute("href", TELL_URL);
+    await expect(a).toHaveAttribute("href", BACKED_OUT_URL);
     await expect(a).toHaveAttribute("target", "_blank");
     await expect(a).toHaveAttribute("rel", /noopener/);
+    await expect(a).toHaveAttribute("rel", /noreferrer/); // S-17 gap
     expect(await a.getAttribute("href")).toMatch(/^https:\/\/wa\.me\//);
     expect(popups).toHaveLength(0); // it is an offer, never opened for the buyer
   });
 
-  test("no link when the reply has no tellSellerUrl", async ({ page }) => {
+  test("no link when the reply has no backedOutUrl, even though it still carries a tellSellerUrl", async ({ page }) => {
     await open(page, { backOut: (r) => json(backOutReply(AFTER_ONE_FRAME, null))(r) });
     await FRAME(page).getByTestId("backout-open").first().click();
     await t(page, "backout-yes").click();
@@ -189,7 +191,7 @@ test.describe("Tell the seller", () => {
     await expect(t(page, "tell-seller")).toHaveCount(0);
   });
 
-  test("a tellSellerUrl that is not a wa.me link is never used as a link", async ({ page }) => {
+  test("a backedOutUrl that is not a wa.me link is never used as a link", async ({ page }) => {
     await open(page, { backOut: (r) => json(backOutReply(AFTER_ONE_FRAME, "javascript:alert(1)"))(r) });
     await FRAME(page).getByTestId("backout-open").first().click();
     await t(page, "backout-yes").click();

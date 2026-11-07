@@ -12,7 +12,7 @@
 //
 //   Request: { token: string }  (the parsed body; `action` is ignored here, handlePost routes on it)
 //
-//   Success: { ok: true, booking: BookingView, whatsappUrl: string | null }   // exactly these keys
+//   Success: { ok: true, booking: BookingView, whatsappUrl: string | null, backedOutUrl: string | null }   // exactly these keys (G1 added backedOutUrl: see booking-backed-out.test.ts)
 //   Failure: { ok: false, error: "not-found" | "not-reserving" }              // exactly these keys
 //     "not-found"     the token matches no booking. THE SAME ANSWER, byte for byte, for a missing, non-string, empty,
 //                     oddly shaped, over-long or well-formed-but-unknown token, and for a blank Token cell: it never hints
@@ -97,6 +97,7 @@ describe("booking: the view (S-12 groups: Reserved, Waiting with position, Sold 
         ended: [{ itemId: "I-0006", name: "Tiny Atlas", detail: "Author Q", isBook: true, quantity: 1, claimIds: [5] }],
       },
       whatsappUrl: expect.stringMatching(/^https:\/\/wa\.me\//),
+      backedOutUrl: null, // claim 5 is released with no Ended at: the seller's doing, not a buyer back-out (G1)
     });
   });
 
@@ -291,7 +292,7 @@ describe("booking: what it must never reveal (D-009, D-011, T-12)", () => {
 
   it("has exactly the designed keys, so nothing extra (a row, a Created time, a Message link) can slip in", () => {
     const r = ask(build(SEED), tokenOf(1)) as { booking: Record<string, unknown> };
-    expect(Object.keys(r).sort()).toEqual(["booking", "ok", "whatsappUrl"]);
+    expect(Object.keys(r).sort()).toEqual(["backedOutUrl", "booking", "ok", "whatsappUrl"]);
     expect(Object.keys(r.booking).sort()).toEqual(["bookingId", "ended", "name", "reserved", "sold", "waiting"]);
   });
 });

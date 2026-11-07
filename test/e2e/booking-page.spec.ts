@@ -23,7 +23,7 @@
 //             has at least one valid token (a non-empty string). Works in a new tab (it is localStorage).
 //             With 2 or more tokens, "my-reservations-item" links (<a href="#/b/<token>">), one per token,
 //             newest first, are also shown. Corrupt or blocked storage: no link, no crash; junk entries are skipped.
-//   booking-whatsapp  <a> to the reply's whatsappUrl (only when it starts "https://wa.me/"), target _blank, rel noopener.
+//   booking-whatsapp  <a> to the reply's whatsappUrl (only when it starts "https://wa.me/"), target _blank, rel noopener noreferrer. G1: it sits after the Reserved/Waiting units (booking-layout.spec.ts).
 //             Tapping it POSTs {action:"waOpened", token} (text/plain, body only, no query string) at most once per
 //             page view, without waiting for the answer and ignoring its failure: the link still opens.
 //   All data via textContent.
