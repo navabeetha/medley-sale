@@ -43,3 +43,6 @@ From the S-12/S-14 UI QA:
 
 From the S-13 QA:
 - Two refusal suffixes with different wording stay on a State note until the next accepted edit. Strip them in a loop.
+
+From G1 (the seller, 2026-11-07):
+- A booking that no longer exists stays in My reservations (`medley-sale:bookings:v1`) forever, and the buyer can't remove it. When the booking API answers `not-found` for a saved token, drop that token from the list. Never drop it on a network error or `busy`. Test first.
