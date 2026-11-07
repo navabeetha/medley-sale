@@ -208,10 +208,12 @@ describe("backOut: the answer", () => {
       expect(text).not.toContain("/#/b/");
     });
 
-    it("keeps the seller's number out of everything but the two URLs, and the buyer's number out of the answer entirely", () => {
+    // G1 (PM test fix): backedOutUrl is a third wa.me link to the seller, so it may carry her number too, never a token.
+    it("keeps the seller's number out of everything but the three URLs, and the buyer's number out of the answer entirely", () => {
       const h = harness(build(LINE));
       const r = back(h, tokenOf(1), 1) as Record<string, unknown>;
-      const { tellSellerUrl, whatsappUrl, ...rest } = r;
+      const { tellSellerUrl, whatsappUrl, backedOutUrl, ...rest } = r;
+      expect(String(backedOutUrl ?? "")).not.toContain("tok-");
       expect(String(tellSellerUrl)).toContain(SELLER_DIGITS);
       expect(JSON.stringify(rest)).not.toContain(SELLER_DIGITS);
       expect(JSON.stringify(r)).not.toContain(digits(1));
