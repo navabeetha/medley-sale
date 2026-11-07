@@ -31,7 +31,7 @@ import { handleGet } from "../../src/api/handle-get";
 import { handlePost, type PostDeps } from "../../src/api/handle-post";
 
 /** All handlers present (S-12 / S-14 made booking and backOut required, S-13 waOpened); a test overrides the one it cares about. */
-const deps = (over: Partial<PostDeps> = {}): PostDeps => ({ reserve: () => ({}), booking: () => ({}), backOut: () => ({}), waOpened: () => ({}), ...over });
+const deps = (over: Partial<PostDeps> = {}): PostDeps => ({ reserve: () => ({}), booking: () => ({}), backOut: () => ({}), waOpened: () => ({}), mine: () => ({}), ...over });
 
 describe("handlePost", () => {
   it("passes a parsed reserve request to the reserve handler and returns its answer as JSON", () => {
@@ -44,10 +44,10 @@ describe("handlePost", () => {
   });
 
   it.each([
-    ["waopened"], ["WaOpened"], ["Booking"], [" backOut"], ["BACKOUT"], ["back-out"], ["catalogue"], ["RESERVE"], [" reserve"], [""],
+    ["waopened"], ["WaOpened"], ["Mine"], [" mine"], ["MINE"], ["mine "], ["myReservations"], ["Booking"], [" backOut"], ["BACKOUT"], ["back-out"], ["catalogue"], ["RESERVE"], [" reserve"], [""],
   ])("answers unknown action %j with an error and does not call reserve", (action) => {
     let called = 0;
-    const out = handlePost(JSON.stringify({ action }), deps({ reserve: () => { called++; return {}; }, booking: () => { called++; return {}; }, backOut: () => { called++; return {}; }, waOpened: () => { called++; return {}; } }));
+    const out = handlePost(JSON.stringify({ action }), deps({ reserve: () => { called++; return {}; }, booking: () => { called++; return {}; }, backOut: () => { called++; return {}; }, waOpened: () => { called++; return {}; }, mine: () => { called++; return {}; } }));
     expect(JSON.parse(out)).toEqual({ error: "unknown action" });
     expect(called).toBe(0);
   });
@@ -67,7 +67,7 @@ describe("handlePost", () => {
     ["a JSON number", "7"],
   ])("answers a bad body (%s) with a bad request error, without throwing", (_label, body) => {
     let called = 0;
-    const out = handlePost(body, deps({ reserve: () => { called++; return {}; }, booking: () => { called++; return {}; }, backOut: () => { called++; return {}; }, waOpened: () => { called++; return {}; } }));
+    const out = handlePost(body, deps({ reserve: () => { called++; return {}; }, booking: () => { called++; return {}; }, backOut: () => { called++; return {}; }, waOpened: () => { called++; return {}; }, mine: () => { called++; return {}; } }));
     expect(JSON.parse(out)).toEqual({ error: "bad request" });
     expect(called).toBe(0);
   });
@@ -137,5 +137,54 @@ describe("handlePost: booking and backOut (S-12, S-14)", () => {
       expect(built).toBe(0);
       expect(out).not.toContain("tok-0001");
     }
+  });
+});
+
+describe("handlePost: mine (S-19)", () => {
+  const others = (hit: string[]): Partial<PostDeps> => ({
+    reserve: () => { hit.push("reserve"); return {}; },
+    booking: () => { hit.push("booking"); return {}; },
+    backOut: () => { hit.push("backOut"); return {}; },
+    waOpened: () => { hit.push("waOpened"); return {}; },
+  });
+
+  it("passes the parsed body object (with its tokens array) to deps.mine only, and returns its answer as JSON", () => {
+    const seen: unknown[] = [];
+    const hit: string[] = [];
+    const out = handlePost(JSON.stringify({ action: "mine", tokens: ["tok-0001", "tok-0002"] }), deps({
+      ...others(hit),
+      mine: (r) => { seen.push(r); return { ok: true, marker: "mine" }; },
+    }));
+    expect(seen).toEqual([{ action: "mine", tokens: ["tok-0001", "tok-0002"] }]);
+    expect(JSON.parse(out)).toEqual({ ok: true, marker: "mine" });
+    expect(hit).toEqual([]);
+  });
+
+  it("is the only handler a mine request reaches, and mine is not reached by the other actions", () => {
+    const hit: string[] = [];
+    const d = deps({ ...others(hit), mine: () => { hit.push("mine"); return {}; } });
+    handlePost(JSON.stringify({ action: "mine", tokens: ["x"] }), d);
+    handlePost(JSON.stringify({ action: "booking", token: "x" }), d);
+    expect(hit).toEqual(["mine", "booking"]);
+  });
+
+  it("answers a generic unavailable error, naming no token, when mine throws", () => {
+    const out = handlePost(JSON.stringify({ action: "mine", tokens: ["tok-0001"] }), deps({
+      mine: () => { throw new Error("Zed Buyer +91 90000 00012 tok-0001"); },
+    }));
+    expect(JSON.parse(out)).toEqual({ error: "unavailable" });
+    for (const leak of ["Zed", "90000", "tok-0001"]) expect(out).not.toContain(leak);
+  });
+
+  it("a handler that returns undefined still yields JSON and never throws", () => {
+    expect(() => handlePost(JSON.stringify({ action: "mine" }), deps({ mine: () => undefined }))).not.toThrow();
+  });
+
+  it("is served from the POST body only: GET never serves mine, whatever the query carries", () => {
+    let built = 0;
+    const out = handleGet({ action: "mine", tokens: "tok-0001" }, { catalogue: () => { built++; return {}; } });
+    expect(JSON.parse(out)).toEqual({ error: "unknown action" });
+    expect(built).toBe(0);
+    expect(out).not.toContain("tok-0001");
   });
 });

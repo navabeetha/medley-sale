@@ -36,7 +36,7 @@ const openedOf = (h: ReturnType<typeof harness>, booking: number) => {
 };
 
 describe("handlePost routes waOpened", () => {
-  const deps = (over: Partial<PostDeps> = {}): PostDeps => ({ reserve: () => ({}), booking: () => ({}), backOut: () => ({}), waOpened: () => ({ ok: true }), ...over } as PostDeps);
+  const deps = (over: Partial<PostDeps> = {}): PostDeps => ({ reserve: () => ({}), booking: () => ({}), backOut: () => ({}), waOpened: () => ({ ok: true }), mine: () => ({}), ...over } as PostDeps);
   it("hands the parsed body to deps.waOpened and returns its answer as JSON", () => {
     let seen: unknown;
     const out = handlePost(JSON.stringify({ action: "waOpened", token: "abc" }), deps({ waOpened: (r: unknown) => { seen = r; return { ok: true }; } } as never));
