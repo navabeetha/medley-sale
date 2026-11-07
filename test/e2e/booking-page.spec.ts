@@ -19,11 +19,10 @@
 //                     reserve answer in sessionStorage "medley-sale:last-booking:v1", ONLY when its token is this page's.
 //   Saved list  localStorage "medley-sale:bookings:v1" (D-005): a JSON array of tokens ONLY (no names, no numbers),
 //             newest first, written when a booking succeeds (a token already in the list moves to the front, once).
-//   my-reservations   <a href="#/b/<newest token>"> in the header on the catalogue and booking screens while the list
-//             has at least one valid token (a non-empty string). Works in a new tab (it is localStorage).
-//             With 2 or more tokens, "my-reservations-item" links (<a href="#/b/<token>">), one per token,
-//             newest first, are also shown. Corrupt or blocked storage: no link, no crash; junk entries are skipped.
-//   booking-whatsapp  <a> to the reply's whatsappUrl (only when it starts "https://wa.me/"), target _blank, rel noopener.
+//   my-reservations   <a href="#/mine"> (S-19; it was the newest booking's page) in the header on the catalogue and booking
+//             screens while the list has at least one valid token (a non-empty string). Works in a new tab (it is
+//             localStorage). S-19 removed the per-booking "my-reservations-item" links: #/mine lists every booking (mine.spec.ts). Corrupt or blocked storage: no link, no crash; junk entries are skipped.
+//   booking-whatsapp  <a> to the reply's whatsappUrl (only when it starts "https://wa.me/"), target _blank, rel noopener noreferrer. G1: it sits after the Reserved/Waiting units (booking-layout.spec.ts).
 //             Tapping it POSTs {action:"waOpened", token} (text/plain, body only, no query string) at most once per
 //             page view, without waiting for the answer and ignoring its failure: the link still opens.
 //   All data via textContent.
@@ -233,10 +232,10 @@ test.describe("F3 and the saved link", () => {
     const link = t(page, "my-reservations");
     await expect(link).toBeVisible();
     await expect(link).toHaveText(/My reservations/);
-    await expect(link).toHaveAttribute("href", `#/b/${TOKEN}`);
+    await expect(link).toHaveAttribute("href", "#/mine"); // S-19: one page for every booking
     await link.click();
-    await expect(t(page, "booking-group-reserved")).toBeVisible();
-    expect(await hash(page)).toBe(`#/b/${TOKEN}`);
+    await expect(t(page, "mine-page")).toBeVisible();
+    expect(await hash(page)).toBe("#/mine");
   });
 
   test("My reservations survives a closed tab: a brand-new tab on the same device still has it (localStorage)", async ({ page }) => {
@@ -248,18 +247,15 @@ test.describe("F3 and the saved link", () => {
     expect(stored).not.toMatch(/Asha|9000/); // no name, no number
     const tab = await page.context().newPage();
     await tab.goto("/");
-    await expect(t(tab, "my-reservations")).toHaveAttribute("href", `#/b/${TOKEN}`);
+    await expect(t(tab, "my-reservations")).toHaveAttribute("href", "#/mine");
   });
 
-  test("the list is newest first: the link goes to the newest booking and every booking is listed", async ({ page }) => {
+  test("with several saved bookings there is still ONE header link, to #/mine (S-19: no per-booking list)", async ({ page }) => {
     await setupApi(page);
     await page.addInitScript(([k, v]) => { if (!localStorage.getItem(k!)) localStorage.setItem(k!, v!); }, [BOOKINGS_KEY, JSON.stringify([OTHER_TOKEN, TOKEN])]);
     await page.goto("/");
-    await expect(t(page, "my-reservations")).toHaveAttribute("href", `#/b/${OTHER_TOKEN}`);
-    const items = t(page, "my-reservations-item");
-    await expect(items).toHaveCount(2);
-    await expect(items.nth(0)).toHaveAttribute("href", `#/b/${OTHER_TOKEN}`);
-    await expect(items.nth(1)).toHaveAttribute("href", `#/b/${TOKEN}`);
+    await expect(t(page, "my-reservations")).toHaveAttribute("href", "#/mine");
+    await expect(t(page, "my-reservations-item")).toHaveCount(0);
   });
 
   test("a new booking goes to the front of the list, and the same token is never listed twice", async ({ page }) => {
@@ -281,7 +277,7 @@ test.describe("F3 and the saved link", () => {
     }
     await page.addInitScript((v) => localStorage.setItem("medley-sale:bookings:v1", v), JSON.stringify([5, TOKEN, ""]));
     await page.goto("/");
-    await expect(t(page, "my-reservations")).toHaveAttribute("href", `#/b/${TOKEN}`);
+    await expect(t(page, "my-reservations")).toHaveAttribute("href", "#/mine");
   });
 
   test("a saved last-booking in sessionStorage alone (the old place) does not make a link", async ({ page }) => {

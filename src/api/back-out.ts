@@ -16,7 +16,7 @@ export interface BackOutDeps extends SellerDeps {
 }
 
 export type BackOutResponse =
-  | { ok: true; booking: Extract<BookingResponse, { ok: true }>["booking"]; whatsappUrl: string | null; tellSellerUrl: string | null }
+  | { ok: true; booking: Extract<BookingResponse, { ok: true }>["booking"]; whatsappUrl: string | null; tellSellerUrl: string | null; backedOutUrl: string | null }
   | { ok: false; error: "not-found" | "not-allowed" | "not-reserving" | "busy" };
 
 const NOT_FOUND = { ok: false, error: "not-found" } as const;
@@ -60,7 +60,7 @@ export function backOut(ss: Spreadsheet, request: unknown, deps: BackOutDeps): B
     const base = contactUrl(deps.sellerWhatsapp);
     const what = item ? title({ itemId: item.id, name: item.name, detail: item.detail, isBook: item.isBook, price: item.price, outcome: "holder", position: null }) : "my reservation";
     const message = `Hi! I'm ${found.name.replace(/\s+/g, " ")}. I've backed out of ${what}.`;
-    return { ok: true, booking: view.booking, whatsappUrl: view.whatsappUrl, tellSellerUrl: base ? `${base}?text=${encodeURIComponent(message)}` : null };
+    return { ok: true, booking: view.booking, whatsappUrl: view.whatsappUrl, backedOutUrl: view.backedOutUrl, tellSellerUrl: base ? `${base}?text=${encodeURIComponent(message)}` : null };
   });
   return out.busy ? { ok: false, error: "busy" } : out.value;
 }

@@ -11,7 +11,7 @@
 //
 //   Request: { token: string, claimId: number }   (the parsed body; `action` is ignored here; the token is in the body only)
 //
-//   Success: { ok: true, booking: BookingView, whatsappUrl: string | null, tellSellerUrl: string | null }   // exactly these keys
+//   Success: { ok: true, booking: BookingView, whatsappUrl: string | null, tellSellerUrl: string | null, backedOutUrl: string | null }   // exactly these keys (G1 added backedOutUrl)
 //     booking / whatsappUrl: EXACTLY what booking() answers for that token right after the change (shape documented in
 //       booking.test.ts): the claim is now under `ended`, a waiter behind it has moved up.
 //     tellSellerUrl: "https://wa.me/<seller digits>?text=<encoded>" to the SELLER, for the optional "Tell the seller" action.
@@ -172,7 +172,7 @@ describe("backOut: the answer", () => {
   it("returns exactly the designed keys, and the booking is what booking() answers afterwards", () => {
     const h = harness(build(LINE));
     const r = back(h, tokenOf(1), 1) as Record<string, unknown>;
-    expect(Object.keys(r).sort()).toEqual(["booking", "ok", "tellSellerUrl", "whatsappUrl"]);
+    expect(Object.keys(r).sort()).toEqual(["backedOutUrl", "booking", "ok", "tellSellerUrl", "whatsappUrl"]);
     const after = view(h.ss, tokenOf(1)) as { booking: unknown; whatsappUrl: unknown };
     expect(r.booking).toEqual(after.booking);
     expect(r.whatsappUrl).toEqual(after.whatsappUrl);
@@ -208,10 +208,12 @@ describe("backOut: the answer", () => {
       expect(text).not.toContain("/#/b/");
     });
 
-    it("keeps the seller's number out of everything but the two URLs, and the buyer's number out of the answer entirely", () => {
+    // G1 (PM test fix): backedOutUrl is a third wa.me link to the seller, so it may carry her number too, never a token.
+    it("keeps the seller's number out of everything but the three URLs, and the buyer's number out of the answer entirely", () => {
       const h = harness(build(LINE));
       const r = back(h, tokenOf(1), 1) as Record<string, unknown>;
-      const { tellSellerUrl, whatsappUrl, ...rest } = r;
+      const { tellSellerUrl, whatsappUrl, backedOutUrl, ...rest } = r;
+      expect(String(backedOutUrl ?? "")).not.toContain("tok-");
       expect(String(tellSellerUrl)).toContain(SELLER_DIGITS);
       expect(JSON.stringify(rest)).not.toContain(SELLER_DIGITS);
       expect(JSON.stringify(r)).not.toContain(digits(1));

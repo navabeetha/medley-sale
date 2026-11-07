@@ -35,8 +35,8 @@
 //                    invalid field takes focus; nothing is sent while a field is invalid.
 //   reserve-error    role="alert" form-level message for every failure that is not about one field.
 //   reserve-skipped  (nothing-available) lists the skipped items by NAME, one reserve-skipped-item each.
-//   reserve-forget   <button> (at least 44 px tall) shown when details are remembered; clears the saved name and
-//                    number from the device and empties the fields.
+//   reserve-forget   GONE (S-19): Forget moved to "My details" on #/mine (mine-details.spec.ts). The form still fills in
+//                    the remembered name and number, and still remembers them after a booking.
 //   Request  POST to API_URL, no query string, Content-Type text/plain, body JSON with exactly the keys
 //            action ("reserve"), name (trimmed), number (E.164 per normalisePhone), idempotencyKey, items
 //            ([{id, quantity}] in basket order) and website ("" unless the honeypot was filled).
@@ -850,7 +850,7 @@ test.describe("name and number are remembered on the device, with a clear option
     await reopen(page);
     await expect(t(page, "reserve-name")).toHaveValue(NAME);
     expect(normalisePhone(await t(page, "reserve-number").inputValue())).toBe(E164);
-    await expect(t(page, "reserve-forget")).toBeVisible();
+    await expect(t(page, "reserve-forget")).toHaveCount(0); // S-19: Forget lives on #/mine now
   });
 
   test("a first-time visitor sees empty fields and no stale values", async ({ page }) => {
@@ -860,29 +860,12 @@ test.describe("name and number are remembered on the device, with a clear option
     await expect(t(page, "reserve-number")).toHaveValue("");
   });
 
-  test("the clear option removes the details from the device and from the fields", async ({ page }) => {
+  test("there is no clear option on the reserve screen any more (S-19: it is on My reservations, mine-details.spec.ts)", async ({ page }) => {
     await setup(page);
     await bookOnce(page);
     await reopen(page);
-    await t(page, "reserve-forget").click();
-    await expect(t(page, "reserve-name")).toHaveValue("");
-    await expect(t(page, "reserve-number")).toHaveValue("");
-    await expect(t(page, "reserve-forget")).toBeHidden();
-    const dump = JSON.stringify(await storage(page));
-    expect(dump).not.toContain("Asha");
-    expect(dump).not.toContain("9000000012");
-    expect(dump).not.toContain("90000 00012");
-    await page.reload();
-    await expect(t(page, "reserve-form")).toBeVisible();
-    await expect(t(page, "reserve-name")).toHaveValue("");
-    await expect(t(page, "reserve-number")).toHaveValue("");
-  });
-
-  test("the clear option is a proper tap target", async ({ page }) => {
-    await setup(page);
-    await bookOnce(page);
-    await reopen(page);
-    await expectTap(t(page, "reserve-forget"), "reserve-forget");
+    await expect(t(page, "reserve-forget")).toHaveCount(0);
+    await expect(t(page, "reserve-name")).toHaveValue(NAME); // the remember choice stays
   });
 
   test("the honeypot value is not saved or prefilled", async ({ page }) => {

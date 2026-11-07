@@ -83,20 +83,20 @@ function messageParts(buyerName: string, units: MessageUnit[]): Part[] {
 const linkLine = (siteUrl: string, token: string): string => `Change or back out: ${siteUrl.replace(/\/+$/, "")}/#/b/${token}`;
 
 /** The text with the first `keep` bullets (all when omitted); a "…and N more" line stands in for the rest. The link line is always last. */
-function compose(parts: Part[], keep: number, siteUrl: string, token: string): string {
+function compose(parts: Part[], keep: number, siteUrl: string, tokens: string[]): string {
   const total = parts.filter((p) => p.bullet).length;
   let seen = 0;
   const shown = parts.filter((p) => !p.bullet || ++seen <= keep);
   while (shown.length > 1 && !shown[shown.length - 1]!.bullet && keep < total) shown.pop(); // no heading left without a bullet
   const lines = shown.map((p) => p.text);
   if (keep < total) lines.push(`…and ${total - keep} more`);
-  lines.push("", linkLine(siteUrl, token));
+  lines.push("", ...tokens.map((t) => linkLine(siteUrl, t)));
   return lines.join("\n");
 }
 
 export function buildMessage(buyerName: string, units: MessageUnit[], siteUrl: string, token: string): string {
   const parts = messageParts(buyerName, units);
-  return compose(parts, parts.length, siteUrl, token);
+  return compose(parts, parts.length, siteUrl, [token]);
 }
 
 /** Brief 6.3: a wa.me URL must stay under this many characters (the longest allowed is one less). */
@@ -108,10 +108,18 @@ const URL_LIMIT = 2000;
  * or more each). Whole lines are dropped, so the URL never ends mid-escape.
  */
 export function buildWhatsappUrl(base: string, buyerName: string, units: MessageUnit[], siteUrl: string, token: string): string {
+  return buildCombinedWhatsappUrl(base, buyerName, units, siteUrl, [token]);
+}
+
+/**
+ * S-19: the same message for several bookings at once. The units are already merged by the caller; the message ends with
+ * one link line per token (bullets are dropped to fit, never a link line).
+ */
+export function buildCombinedWhatsappUrl(base: string, buyerName: string, units: MessageUnit[], siteUrl: string, tokens: string[]): string {
   const parts = messageParts(buyerName, units);
   let keep = parts.filter((p) => p.bullet).length;
   for (;;) {
-    const url = `${base}?text=${encodeURIComponent(compose(parts, keep, siteUrl, token))}`;
+    const url = `${base}?text=${encodeURIComponent(compose(parts, keep, siteUrl, tokens))}`;
     if (url.length < URL_LIMIT || keep === 0) return url;
     keep--;
   }
@@ -128,4 +136,23 @@ export function buildSellerMessage(buyerName: string, unit: MessageUnit, siteUrl
     ? `${title(unit)}${price} is reserved for you.`
     : `You are ${ordinal(unit.position ?? 1)} in line for ${title(unit)}${price}.`;
   return [`Hi ${flatten(buyerName)}!`, what, "", `Change or back out: ${siteUrl.replace(/\/+$/, "")}/#/b/${token}`].join("\n");
+}
+
+/**
+ * The buyer's note to the seller about items they backed out of (G1): `${base}?text=<message>` under 2,000 characters.
+ * Buyer's voice, no number, token or private link (D-011). One bullet per item; too long, the last bullets are dropped
+ * and "…and N more" says how many. Whole lines only, so the URL never ends mid-escape.
+ */
+export function buildBackedOutUrl(base: string, buyerName: string, units: MessageUnit[]): string {
+  const hi = `Hi! I'm ${flatten(buyerName)}.`;
+  const names = units.map(title);
+  let keep = names.length;
+  for (;;) {
+    const text = keep === 1 && names.length === 1
+      ? `${hi} I've backed out of ${names[0]}.`
+      : [`${hi} I've backed out of:`, ...names.slice(0, keep).map((n) => `• ${n}`), ...(keep < names.length ? [`…and ${names.length - keep} more`] : [])].join("\n");
+    const url = `${base}?text=${encodeURIComponent(text)}`;
+    if (url.length < URL_LIMIT || keep <= 1) return url;
+    keep--;
+  }
 }
