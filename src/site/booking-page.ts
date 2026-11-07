@@ -2,6 +2,7 @@
 // booking, shows it in its four groups, offers the WhatsApp link and a per-unit Back out. The token is only in the
 // hash and in POST bodies. All text goes in via textContent; the server's own error text is never shown.
 import { postJson } from "./api-post";
+import { createBackOutUi } from "./backout-unit";
 import { el } from "./dom";
 import { forgetBooking } from "./saved-bookings";
 
@@ -51,9 +52,6 @@ export function createBookingPage(root: HTMLElement, onChanged: () => void): Boo
   let skipped: Skipped[] = [];
   let waSent = false; // waOpened goes out at most once per page view
   let seq = 0; // a stale answer (the buyer left, or asked again) is ignored
-  let confirming: number | null = null; // the claim whose confirmation is open
-  let backing = false; // a back-out is in flight
-  let backError = false;
   let tellUrl: string | null = null;
 
   const back = el("a", "← Back to the sale", "back", "booking-back");
@@ -100,78 +98,24 @@ export function createBookingPage(root: HTMLElement, onChanged: () => void): Boo
     return li;
   }
 
-  // One unit: its Back out button, and its confirmation when that is the claim being confirmed.
-  function unit(claimId: number, name: string, label: string): HTMLElement {
-    const u = el("div", undefined, "unit", "booking-unit");
-    const open = el("button", "Back out", "backout", "backout-open");
-    open.type = "button";
-    open.dataset.claim = String(claimId);
-    open.setAttribute("aria-label", `Back out ${name}${label}`);
-    open.addEventListener("click", () => {
-      if (backing) return;
-      confirming = claimId;
-      backError = false;
-      render();
-      root.querySelector<HTMLElement>('[data-testid="backout-cancel"]')?.focus();
-    });
-    u.append(open);
-    if (confirming !== claimId) return u;
-    const box = el("div", undefined, "confirm", "backout-confirm");
-    box.append(el("p", `Back out of ${name}? If you change your mind, you'll rejoin at the end of the line.`));
-    const yes = el("button", backing ? "Backing out…" : "Yes, back out", "backout", "backout-yes");
-    yes.type = "button";
-    yes.disabled = backing;
-    yes.addEventListener("click", () => void backOut(claimId));
-    const cancel = el("button", "Cancel", "backout", "backout-cancel");
-    cancel.type = "button";
-    cancel.disabled = backing; // a request in flight cannot be closed
-    cancel.addEventListener("click", () => {
-      confirming = null;
-      backError = false;
-      render();
-      root.querySelector<HTMLElement>(`[data-claim="${claimId}"]`)?.focus();
-    });
-    box.append(yes, cancel);
-    if (backing) {
-      const status = el("p", "Backing out… please wait", "note", "backout-status");
-      status.setAttribute("role", "status"); // announced to screen readers
-      box.append(status);
+  // The Back out button and confirmation are shared with the My reservations page (backout-unit.ts).
+  const backUi = createBackOutUi(root, () => render(), backOutRequest, () => onChanged()); // a back-out frees a unit
+
+  async function backOutRequest(tok: string, claimId: number): Promise<boolean | null> {
+    const mine = seq;
+    const r = (await postJson({ action: "backOut", token: tok, claimId }, TIMEOUT_MS)) as
+      { ok?: unknown; booking?: View; whatsappUrl?: unknown; backedOutUrl?: unknown } | null;
+    if (mine !== seq) return null; // the buyer left the page meanwhile
+    if (r?.ok === true && r.booking && typeof r.booking === "object") {
+      view = r.booking;
+      whatsapp = waUrl(r.whatsappUrl);
+      tellUrl = waUrl(r.backedOutUrl);
+      return true;
     }
-    if (backError) {
-      const err = el("p", "Couldn't back out just now. Please try again in a moment.", "field-error", "backout-error");
-      err.setAttribute("role", "alert");
-      box.append(err);
-    }
-    u.append(box);
-    return u;
+    return false;
   }
 
-  async function backOut(claimId: number): Promise<void> {
-    if (backing) return;
-    backing = true;
-    backError = false;
-    render();
-    const mine = seq;
-    let ok = false;
-    try {
-      const r = (await postJson({ action: "backOut", token, claimId }, TIMEOUT_MS)) as
-        { ok?: unknown; booking?: View; whatsappUrl?: unknown; backedOutUrl?: unknown } | null;
-      if (mine !== seq) return; // the buyer left the page meanwhile
-      if (r?.ok === true && r.booking && typeof r.booking === "object") {
-        view = r.booking;
-        whatsapp = waUrl(r.whatsappUrl);
-        tellUrl = waUrl(r.backedOutUrl);
-        confirming = null;
-        ok = true;
-      }
-    } catch {
-      if (mine !== seq) return;
-    }
-    backing = false;
-    backError = !ok;
-    render();
-    if (ok) onChanged();
-  }
+  const unit = (claimId: number, name: string, label: string): HTMLElement => backUi.unit(token ?? "", claimId, name, label);
 
   function reservedLine(l: Line): HTMLElement {
     const li = plainLine(l);
@@ -198,6 +142,7 @@ export function createBookingPage(root: HTMLElement, onChanged: () => void): Boo
   }
 
   function render(): void {
+    backUi.startRender();
     const parts: (HTMLElement | null)[] = [back];
     if (phase === "loading") {
       parts.push(el("p", "Loading your reservation… this can take a few seconds", "note", "booking-loading"));
@@ -247,8 +192,8 @@ export function createBookingPage(root: HTMLElement, onChanged: () => void): Boo
       if (token === t) return;
       token = t;
       view = whatsapp = tellUrl = null;
-      confirming = null;
-      backing = backError = waSent = false;
+      backUi.reset();
+      waSent = false;
       skipped = readSkipped(t);
       if (t === "") { // "#/b/" names no booking: no request
         seq++;

@@ -1,4 +1,4 @@
-// S-12 "My reservations" (D-005): the tokens of this device's bookings, newest first, in localStorage. Tokens only: no
+// S-12 "My reservations" (D-005; S-19 made it one page): the tokens of this device's bookings, newest first, in localStorage. Tokens only: no
 // names and no numbers are ever stored here. Every access is guarded (blocked or corrupt storage, T-14).
 import { el } from "./dom";
 
@@ -24,28 +24,12 @@ export function saveBooking(token: string): void {
   }
 }
 
-const link = (token: string, text: string, testid: string): HTMLAnchorElement => {
-  const a = el("a", text, "my-link", testid);
-  a.href = `#/b/${encodeURIComponent(token)}`;
-  return a;
-};
-
-/** The header link(s) for the saved list, or an empty list of children when nothing valid is saved. */
+/** The header link for the saved list (S-19: one page, #/mine, for every booking), or none when nothing valid is saved. */
 export function savedNav(): HTMLElement[] {
-  const tokens = readSaved();
-  if (tokens.length === 0) return [];
-  const out: HTMLElement[] = [link(tokens[0]!, "My reservations", "my-reservations")];
-  if (tokens.length > 1) {
-    const ul = el("ul", undefined, "my-list");
-    ul.setAttribute("role", "list");
-    tokens.forEach((t, i) => {
-      const li = el("li");
-      li.append(link(t, i === 0 ? "Reservation 1 (newest)" : `Reservation ${i + 1}`, "my-reservations-item"));
-      ul.append(li);
-    });
-    out.push(ul);
-  }
-  return out;
+  if (readSaved().length === 0) return [];
+  const a = el("a", "My reservations", "my-link", "my-reservations");
+  a.href = "#/mine";
+  return [a];
 }
 
 /** Drops a token from the saved list (the booking API said it no longer exists). Others keep their order. */

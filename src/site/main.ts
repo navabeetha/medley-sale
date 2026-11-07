@@ -5,6 +5,7 @@ import { createBasketView } from "./basket-view";
 import { API_URL } from "./config";
 import { createBookingPage } from "./booking-page";
 import { el } from "./dom";
+import { createMinePage } from "./mine-page";
 import { createReserveScreen } from "./reserve-screen";
 import { saveBooking, savedNav } from "./saved-bookings";
 import {
@@ -139,7 +140,9 @@ function start(root: HTMLElement): void {
   const bookingNav = el("div");
   const bookingBody = el("div");
   bookingView.append(bookingNav, bookingBody);
-  root.replaceChildren(catalogueView, reserveView, bookingView);
+  const mineView = el("div", undefined, undefined, "mine-page"); // S-19 "My reservations" at #/mine
+  mineView.hidden = true;
+  root.replaceChildren(catalogueView, reserveView, bookingView, mineView);
 
   const basket = createBasketView();
   const reserve = createReserveScreen(reserveView, basket, (token) => {
@@ -147,6 +150,7 @@ function start(root: HTMLElement): void {
     location.hash = `#/b/${encodeURIComponent(token)}`; // the token is only ever in the hash and POST bodies
   });
   const booking = createBookingPage(bookingBody, () => void load()); // a back-out frees a unit: read the list again
+  const mine = createMinePage(mineView, () => void load()); // a back-out frees a unit: read the list again
   let catalogueScroll = 0; // where the buyer was on the list when the form opened (F4)
   let reserving = false;
   let photos: Manifest = readManifestCache(); // last good manifest: repeat visits show thumbnails at once
@@ -181,16 +185,27 @@ function start(root: HTMLElement): void {
   }
 
   function route(): void {
-    const token = bookingToken();
+    const onMine = location.hash === "#/mine";
+    const token = onMine ? null : bookingToken();
     const onReserve = token === null && reserving && location.hash === "#/reserve";
     const wasOnReserve = reserveView.firstChild !== null;
     const wasOnBooking = !bookingView.hidden;
     if (onReserve && !wasOnReserve && !catalogueView.hidden) catalogueScroll = window.scrollY;
-    catalogueView.hidden = onReserve || token !== null;
+    const wasOnMine = !mineView.hidden;
+    catalogueView.hidden = onReserve || token !== null || onMine;
     bookingView.hidden = token === null;
-    basket.setBarHidden(onReserve || token !== null);
+    mineView.hidden = !onMine;
+    basket.setBarHidden(onReserve || token !== null || onMine);
     catalogueNav.replaceChildren(...(catalogueView.hidden ? [] : savedNav()));
     bookingNav.replaceChildren(...(token === null ? [] : savedNav()));
+    if (onMine) {
+      reserve.close();
+      booking.close();
+      mine.open();
+      if (!wasOnMine) window.scrollTo(0, 0);
+      return;
+    }
+    mine.close();
     if (token !== null) {
       reserve.close();
       booking.open(token);

@@ -5,43 +5,18 @@ import type { CatalogueItem } from "../api/catalogue";
 import type { Basket } from "./basket";
 import type { BasketView } from "./basket-view";
 import { postJson } from "./api-post";
+import { readBuyer, writeBuyer } from "./buyer";
 import { el } from "./dom";
 import {
   KEY_PATTERN, NOT_SURE, checkNumber, interpretReply, newIdempotencyKey, validateName, type Failure,
 } from "./reserve-form";
 
-const BUYER_KEY = "medley-sale:buyer:v1"; // localStorage: remembered name and number (brief 6.3)
 const IDEM_KEY = "medley-sale:idempotency:v1"; // sessionStorage: kept until a booking succeeds (PM, S-10)
 const BOOKING_KEY = "medley-sale:last-booking:v1"; // sessionStorage: the success answer for S-12, NOT keyed by the token
 const TIMEOUT_MS = 30_000; // PM: a cold Apps Script start takes ~13 s (D-033), so wait well past that
 const NOTICE = "Your number is only seen by the seller and is used only for this sale."; // brief 6.4
 
 // ---- storage (always guarded: it may be blocked, T-14) ----
-
-function readBuyer(): { name: string; number: string } | null {
-  try {
-    const o = JSON.parse(localStorage.getItem(BUYER_KEY) ?? "null") as { name?: unknown; number?: unknown } | null;
-    return o && typeof o.name === "string" && typeof o.number === "string" ? { name: o.name, number: o.number } : null;
-  } catch {
-    return null;
-  }
-}
-
-function writeBuyer(name: string, number: string): void {
-  try {
-    localStorage.setItem(BUYER_KEY, JSON.stringify({ name, number }));
-  } catch {
-    /* blocked or full: nothing is remembered */
-  }
-}
-
-function forgetBuyer(): void {
-  try {
-    localStorage.removeItem(BUYER_KEY);
-  } catch {
-    /* blocked: nothing to clear */
-  }
-}
 
 // The idempotency key survives reloads (sessionStorage) so a timed-out booking retried after a reload cannot
 // book twice. If storage is blocked it lives in memory only.
@@ -172,23 +147,13 @@ export function createReserveScreen(root: HTMLElement, basket: BasketView, onBoo
     trap.setAttribute("aria-hidden", "true");
     f.append(trap);
 
-    const forget = el("button", "Forget my details on this device", "forget", "reserve-forget");
-    forget.type = "button";
-    forget.hidden = saved === null;
-    forget.addEventListener("click", () => {
-      forgetBuyer();
-      name.value = "";
-      number.value = "";
-      forget.hidden = true;
-    });
-
     const submit = el("button", "Reserve", "submit", "reserve-submit");
     submit.type = "submit";
     const status = el("p", "Saving…", "note", "reserve-status");
     status.setAttribute("role", "status");
     status.hidden = true;
     const messages = el("div"); // the form-level alert and the skipped list live here
-    f.append(submit, status, messages, forget);
+    f.append(submit, status, messages);
 
     let pending = false;
 
