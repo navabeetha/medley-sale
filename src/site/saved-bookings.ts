@@ -47,3 +47,14 @@ export function savedNav(): HTMLElement[] {
   }
   return out;
 }
+
+/** Drops a token from the saved list (the booking API said it no longer exists). Others keep their order. */
+export function forgetBooking(token: string): void {
+  try {
+    const all = readSaved();
+    if (!all.includes(token)) return; // never saved here: a mistyped link leaves the list alone
+    localStorage.setItem(BOOKINGS_KEY, JSON.stringify(all.filter((t) => t !== token)));
+  } catch {
+    /* blocked storage: the stale link stays, nothing else breaks */
+  }
+}
