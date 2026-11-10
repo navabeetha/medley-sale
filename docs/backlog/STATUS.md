@@ -10,7 +10,24 @@
 - **PM checks, all passed:** 62 live items match staging by ID, name, tab and photos (the 3 extra IDs are rows the catalogue hides, as on staging); T-12 clean apart from 4 Amazon tracking-query links (no neighbour data; led to D-037); `contactUrl` is `wa.me/91` + 10 digits; CORS `*` on both hops; 1.4 to 2.1 s warm. Gate 743 unit, 352 e2e, 3.4 KB, pii clean. Pages deploy green; a WebKit iPhone run on the live page showed 62 reserve links in 2.6 s, 0.3 s on a second visit, prefill correct.
 - **Seller phone check, passed.** Two notes: (1) the reserve message should include the **brand** ("Air purifier" alone was ambiguous); recorded on [S-13](stories/S-13-whatsapp-handoff.md) for the message work. (2) Strip link tracking: [D-037](../decisions/D-037-strip-link-tracking.md), QA signed off (F1 fixed on re-check), merged and live 2026-11-06. The "R1 catalogue" deployment is now version 2 at the same URL. The live response has no tracker parameters and no Amazon queries (only a functional `region_id` remains), and 4 shortened links return 200.
 
-**Resume here:**
+**PAUSED 2026-11-10 (seller's call): read this first.**
+- **Why:** the seller decided the garage sale isn't worth pursuing right now. She may later pivot it into a **house items catalogue** app, reusing the code and ideas.
+- **Where it stopped:** `main` at 483f4ea, clean and pushed. Everything is merged and QA-signed: S-09 to S-15, the G1 fixes and S-19 (one My reservations view).
+  - Staging site `…/medley-sale/staging/` and the staging deployment (@5) are live on the build copy.
+  - G1 phone checks: 1 to 5 passed, plus the first round of feedback, which has been built. Not yet done: the five S-19 re-checks and old checks 6 to 9 (typing during a cold load, Sheets app State → sold, an emoji name, autofill).
+  - The real site still serves the read-only R1 catalogue. Reserving was never switched on there (that's G2/S-18).
+- **Not done:** S-17 (privacy pass plus the carried S3/S4 notes, including the combined-message cap F1, refresh error F2 and routing F3, all must-fix before go-live) and S-18 (cutover). S-07 search/filter red tests are parked on branch `S-07-filter-search`.
+- **Left running:** on the build copy, the onClaimsEdit and 10-minute recalculateAll triggers. They're harmless. The seller can delete them under Apps Script › Triggers.
+- **Leftover worktrees:** `../a44GarageSale-api` and `../a44GarageSale-ui` are both merged and can be removed with `git worktree remove`.
+- **Ideas worth keeping for a catalogue pivot:**
+  - the sheet as the source of truth, with addIdColumns, migrate and photo tooling;
+  - the static Pages site plus Apps Script JSON API, and the staging build (`tools/build.mjs`);
+  - tokens without accounts (D-005);
+  - the WhatsApp message builder with caps;
+  - the pii-scan pre-push hook.
+- **To resume:** re-run the S-19 and 6 to 9 phone checks on staging, then S-17, then S-18 (G2).
+
+**Resume here (pre-pause detail):**
 1. **Seller's order (2026-11-06):** (a) complete the customer journey (reserving), (b) an easier way to add new items and make their cards (new scope, not in the brief; scope it with her after the MVP), (c) search and filter, which she'd take earlier if it's quick. **PM plan:** S-07 first (1 pt, red tests parked on `S-07-filter-search`, ships on R1 with no seller steps), then S-08 (needed before S-17), then Slices 2 to 4 (S-09 to S-18). Reserving goes live only at G2 together with back-out and the sell workflow, because it replaces comment-claiming on the real sheet. Fold the brand-in-message note into S-13. **Seller chose the fast path ([D-038](../decisions/D-038-fast-path-to-reserving.md)):** S-07, S-08 and S-16 postponed; wave 1 is S-11 (API track) and S-09 (UI track) in parallel.
    - **Progress (2026-11-06 evening):** S-09 basket Done (QA sign-off, plus a follow-up bugfix round signed off). S-11 reserve API Done (QA found an S1, a partial write replayed as success, before anything shipped; fixed in a bugfix round and re-checked). Both merged to `main`, local, **not pushed** (push at the next milestone; the basket shows only when the catalogue says `reserving: true`). Gate on main: 1039 unit, 524 e2e, 5.4 KB, pii clean.
    - **S-15 Done** (QA NOT YET → bugfix round → sign-off; F7–F10 carried to S-14). Merged to `main` (unpushed). D-039 records the accepted missed-promotion gap.
